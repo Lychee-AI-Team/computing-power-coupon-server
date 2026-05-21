@@ -1,0 +1,14 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.env
+.env.remote.bak
+.venv/
+venv/
+*.egg
+.idea/
+.vscode/
+.claude/
+*.pem
