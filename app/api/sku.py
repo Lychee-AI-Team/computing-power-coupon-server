@@ -37,6 +37,21 @@ async def list_skus(
     )
 
 
+@router.get("/public/list", response_model=SkuListResponse, summary="已上架SKU列表", description="分页查询所有已上架的SKU，无需登录即可访问")
+async def list_active_skus(
+    page: int = Query(default=1, description="页码"),
+    page_size: int = Query(default=20, description="每页数量"),
+    service: SkuService = Depends(_get_sku_service),
+):
+    items, total = await service.list_active_skus(page, page_size)
+    return SkuListResponse(
+        items=[SkuItem.model_validate(item) for item in items],
+        total=total,
+        page=page,
+        page_size=page_size,
+    )
+
+
 @router.get("/{sku_id}", response_model=SkuItem, summary="SKU详情", description="根据ID获取SKU详细信息，仅管理员可访问")
 async def get_sku(
     sku_id: int = Path(..., description="SKU ID"),

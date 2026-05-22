@@ -19,6 +19,23 @@ class SkuService:
 
         return items, total
 
+    async def list_active_skus(self, page: int, page_size: int) -> tuple[list[Sku], int]:
+        conditions = [Sku.status == 1]
+        count_stmt = select(func.count(Sku.sku_id)).where(*conditions)
+        total = (await self.db.execute(count_stmt)).scalar() or 0
+
+        stmt = (
+            select(Sku)
+            .where(*conditions)
+            .order_by(Sku.sku_id.desc())
+            .offset((page - 1) * page_size)
+            .limit(page_size)
+        )
+        result = await self.db.execute(stmt)
+        items = list(result.scalars().all())
+
+        return items, total
+
     async def get_sku_by_id(self, sku_id: int) -> Sku | None:
         stmt = select(Sku).where(Sku.sku_id == sku_id)
         result = await self.db.execute(stmt)
