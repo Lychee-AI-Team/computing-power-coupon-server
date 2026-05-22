@@ -1,6 +1,8 @@
 from contextlib import asynccontextmanager
+import re
 
 from fastapi import FastAPI
+from starlette.middleware.base import BaseHTTPMiddleware
 
 from app.api.cart import router as cart_router
 from app.api.health import router as health_router
@@ -12,6 +14,19 @@ from app.core.config import settings
 from app.core.database import Base, engine
 from app.core.external_client import close_external_client, init_external_client
 from app.core.redis import close_redis, init_redis
+
+
+_MULTI_SLASH = re.compile(r"/{2,}")
+
+
+class NormalizePathMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request, call_next):
+        path = request.scope.get("path", "")
+        if "//" in path:
+            normalized = _MULTI_SLASH.sub("/", path)
+            request.scope["path"] = normalized
+            request.scope["raw_path"] = normalized.encode("utf-8")
+        return await call_next(request)
 
 
 @asynccontextmanager
@@ -33,6 +48,8 @@ app = FastAPI(
     lifespan=lifespan,
     docs_url="/docs" if settings.APP_DEBUG else None,
 )
+
+app.add_middleware(NormalizePathMiddleware)
 
 app.include_router(health_router)
 app.include_router(user_router)
