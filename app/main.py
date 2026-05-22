@@ -1,7 +1,8 @@
 from contextlib import asynccontextmanager
 import re
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.openapi.docs import get_swagger_ui_html
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from app.api.cart import router as cart_router
@@ -46,10 +47,20 @@ app = FastAPI(
     description="算力券充值与管理系统的 API 文档",
     summary="算力券服务接口",
     lifespan=lifespan,
-    docs_url="/docs" if settings.APP_DEBUG else None,
+    docs_url=None,
+    openapi_url="/openapi.json" if settings.APP_DEBUG else None,
 )
 
 app.add_middleware(NormalizePathMiddleware)
+
+
+@app.get("/docs", include_in_schema=False)
+async def custom_swagger_ui(request: Request):
+    root = request.scope.get("root_path", "") or request.headers.get("x-forwarded-prefix", "")
+    return get_swagger_ui_html(
+        openapi_url=f"{root}/openapi.json",
+        title=f"{app.title} - Swagger UI",
+    )
 
 app.include_router(health_router)
 app.include_router(user_router)
