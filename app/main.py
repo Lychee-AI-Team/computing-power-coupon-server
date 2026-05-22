@@ -1,8 +1,8 @@
 from contextlib import asynccontextmanager
 import re
 
-from fastapi import FastAPI, Request
-from fastapi.openapi.docs import get_swagger_ui_html
+from fastapi import FastAPI
+from fastapi.responses import HTMLResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from app.api.cart import router as cart_router
@@ -55,12 +55,31 @@ app.add_middleware(NormalizePathMiddleware)
 
 
 @app.get("/docs", include_in_schema=False)
-async def custom_swagger_ui(request: Request):
-    root = request.scope.get("root_path", "") or request.headers.get("x-forwarded-prefix", "")
-    return get_swagger_ui_html(
-        openapi_url=f"{root}/openapi.json",
-        title=f"{app.title} - Swagger UI",
-    )
+async def custom_swagger_ui():
+    html = """
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>算力券服务 - Swagger UI</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5/swagger-ui.css">
+</head>
+<body>
+    <div id="swagger-ui"></div>
+    <script src="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5/swagger-ui-bundle.js"></script>
+    <script>
+        window.onload = function() {
+            SwaggerUIBundle({
+                url: window.location.pathname.replace(/\\/docs\\/?$/, '') + '/openapi.json',
+                dom_id: '#swagger-ui',
+                deepLinking: true,
+            });
+        };
+    </script>
+</body>
+</html>
+"""
+    return HTMLResponse(html)
 
 app.include_router(health_router)
 app.include_router(user_router)
