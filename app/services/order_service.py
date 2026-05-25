@@ -190,7 +190,7 @@ class OrderService:
                 continue
 
             expired_time = int(item.expired_at.timestamp()) if item.expired_at else 0
-            quota = int(sku.actual_amount)
+            quota = int(sku.actual_amount * 500000)
             codes = await ext_svc.create_redemption(
                 name=sku.sku_name,
                 quota=quota,
