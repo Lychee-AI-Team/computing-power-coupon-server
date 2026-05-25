@@ -153,7 +153,10 @@ class OrderService:
             await self.db.delete(cart_item)
 
         await self.db.commit()
-        await self.db.refresh(order)
+        stmt = select(Order).where(Order.order_id == order.order_id).options(
+            selectinload(Order.items).selectinload(OrderItem.sku),
+        )
+        order = (await self.db.execute(stmt)).scalar_one()
         return order
 
     async def create_redemption_codes_for_order(

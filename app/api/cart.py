@@ -70,6 +70,15 @@ async def update_cart_item(
     return _to_cart_item_info(item)
 
 
+@router.delete("/clear/all", response_model=MessageResponse, summary="清空购物车", description="清空当前用户购物车中的所有项")
+async def clear_cart(
+    user: User = Depends(get_current_user),
+    service: CartService = Depends(_get_cart_service),
+):
+    count = await service.clear_cart(user.id)
+    return {"message": f"已清空购物车，共移除{count}项"}
+
+
 @router.delete("/{item_id}", response_model=MessageResponse, summary="删除购物车项", description="删除购物车中指定的SKU项")
 async def remove_cart_item(
     item_id: int = Path(..., description="购物车项ID"),
@@ -80,12 +89,3 @@ async def remove_cart_item(
     if not ok:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="购物车项不存在")
     return {"message": "已从购物车移除"}
-
-
-@router.delete("/clear/all", response_model=MessageResponse, summary="清空购物车", description="清空当前用户购物车中的所有项")
-async def clear_cart(
-    user: User = Depends(get_current_user),
-    service: CartService = Depends(_get_cart_service),
-):
-    count = await service.clear_cart(user.id)
-    return {"message": f"已清空购物车，共移除{count}项"}
