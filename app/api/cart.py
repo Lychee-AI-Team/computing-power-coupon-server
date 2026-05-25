@@ -23,6 +23,7 @@ def _to_cart_item_info(item) -> CartItemInfo:
         face_value=item.sku.face_value,
         bonus_amount=item.sku.bonus_amount,
         actual_amount=item.sku.actual_amount,
+        sku_status=item.sku.status,
         quantity=item.quantity,
         created_at=item.created_at,
         updated_at=item.updated_at,

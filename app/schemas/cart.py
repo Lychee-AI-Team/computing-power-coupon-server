@@ -24,6 +24,7 @@ class CartItemInfo(BaseModel):
     face_value: Decimal = Field(title="面值", description="面值")
     bonus_amount: Decimal = Field(title="赠送金额", description="赠送金额")
     actual_amount: Decimal = Field(title="实际售价", description="实际售价")
+    sku_status: int = Field(title="SKU上下架状态", description="SKU上下架状态: 0=下架, 1=上架")
     quantity: int = Field(title="数量", description="数量")
     created_at: datetime = Field(title="创建时间", description="创建时间")
     updated_at: datetime = Field(title="更新时间", description="更新时间")
