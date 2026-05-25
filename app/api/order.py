@@ -20,16 +20,17 @@ def _get_order_service(db: AsyncSession = Depends(get_db)) -> OrderService:
 
 # --- 用户端接口 ---
 
-@router.get("/my", response_model=OrderListResponse, summary="我的订单列表", description="分页查询当前用户的订单列表，支持按状态和订单号筛选")
+@router.get("/my", response_model=OrderListResponse, summary="我的订单列表", description="分页查询当前用户的订单列表，支持按状态、订单号和支付方式筛选")
 async def list_my_orders(
     page: int = Query(default=1, description="页码"),
     page_size: int = Query(default=20, description="每页数量"),
     status: int | None = Query(default=None, description="订单状态，0-待支付 1-已支付 2-已取消 3-已完成"),
     order_no: str | None = Query(default=None, description="订单编号"),
+    pay_channel: int | None = Query(default=None, description="支付方式，1-微信 2-支付宝"),
     user: User = Depends(get_current_user),
     service: OrderService = Depends(_get_order_service),
 ):
-    items, total = await service.list_my_orders(user.id, page, page_size, status, order_no)
+    items, total = await service.list_my_orders(user.id, page, page_size, status, order_no, pay_channel)
     return OrderListResponse(
         items=[OrderInfo.model_validate(item) for item in items],
         total=total,

@@ -3,6 +3,8 @@ from decimal import Decimal
 
 from pydantic import BaseModel, Field
 
+from app.schemas.sku import SkuItem
+
 
 class OrderItemInfo(BaseModel):
     """订单中单个SKU项的详细信息"""
@@ -15,8 +17,11 @@ class OrderItemInfo(BaseModel):
     exchange_status: int = Field(title="兑换状态", description="兑换状态")
     exchange_user_id: int | None = Field(title="兑换用户ID", description="兑换用户ID")
     expired_at: datetime | None = Field(title="过期时间", description="过期时间")
+    redemption_code: str | None = Field(default=None, title="兑换码", description="兑换码")
+    redemption_status: int = Field(default=0, title="兑换码状态", description="兑换码生成状态: 0=待生成, 1=生成中, 2=已生成, 3=生成失败")
     created_at: datetime = Field(title="创建时间", description="创建时间")
     updated_at: datetime = Field(title="更新时间", description="更新时间")
+    sku: SkuItem | None = Field(default=None, title="SKU详情", description="对应SKU的完整信息")
 
 
 class OrderInfo(BaseModel):

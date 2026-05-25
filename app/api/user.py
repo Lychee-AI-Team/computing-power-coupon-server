@@ -14,6 +14,7 @@ from app.schemas.user import (
     UserSearchResponse,
     UserSearchItem,
     ChangePasswordRequest,
+    CurrentUserResponse,
     MessageResponse,
 )
 from app.services.external_platform import ExternalPlatformService
@@ -52,6 +53,11 @@ async def login(req: UserLoginRequest, service: UserService = Depends(_get_user_
 async def search_user(keyword: str = Query(description="搜索关键字"), service: UserService = Depends(_get_user_service)):
     users = await service.search_users(keyword)
     return UserSearchResponse(users=[UserSearchItem(**u) for u in users])
+
+
+@router.get("/me", response_model=CurrentUserResponse, summary="当前用户信息", description="根据请求头中的访问令牌返回当前登录用户的信息")
+async def get_me(user: User = Depends(get_current_user)):
+    return CurrentUserResponse.model_validate(user)
 
 
 @router.put("/password", response_model=MessageResponse, summary="修改密码", description="修改当前登录用户的密码")

@@ -1,3 +1,5 @@
+from datetime import datetime
+
 from pydantic import BaseModel, Field
 
 
@@ -75,3 +77,17 @@ class MessageResponse(BaseModel):
     model_config = {"title": "通用消息响应"}
 
     message: str = Field(title="操作结果", description="操作结果信息")
+
+
+class CurrentUserResponse(BaseModel):
+    """当前登录用户信息"""
+
+    model_config = {"title": "当前用户信息", "from_attributes": True}
+
+    id: int = Field(title="用户ID", description="用户ID")
+    username: str = Field(title="用户名", description="用户名")
+    display_name: str = Field(title="显示名称", description="显示名称")
+    role: int = Field(title="角色", description="角色，1-普通用户 2-管理员 3-超级管理员")
+    external_user_id: int | None = Field(default=None, title="外部平台用户ID", description="外部平台用户ID")
+    created_at: datetime = Field(title="创建时间", description="创建时间")
+    updated_at: datetime = Field(title="更新时间", description="更新时间")

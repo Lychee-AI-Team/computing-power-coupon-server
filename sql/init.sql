@@ -56,12 +56,15 @@ CREATE TABLE IF NOT EXISTS `order_items` (
     `exchange_status` TINYINT NOT NULL DEFAULT 0 COMMENT '兑换状态: 0=未兑换, 1=已兑换',
     `exchange_user_id` INT DEFAULT NULL COMMENT '兑换用户ID',
     `expired_at` DATETIME DEFAULT NULL COMMENT '过期时间',
+    `redemption_code` VARCHAR(128) DEFAULT NULL COMMENT '兑换码',
+    `redemption_status` TINYINT NOT NULL DEFAULT 0 COMMENT '兑换码生成状态: 0=待生成, 1=生成中, 2=已生成, 3=生成失败',
     `created_at` DATETIME DEFAULT CURRENT_TIMESTAMP,
     `updated_at` DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     PRIMARY KEY (`item_id`),
     KEY `idx_order_id` (`order_id`),
     KEY `idx_sku_id` (`sku_id`),
-    KEY `idx_exchange_user_id` (`exchange_user_id`)
+    KEY `idx_exchange_user_id` (`exchange_user_id`),
+    KEY `idx_redemption_status` (`redemption_status`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS `cart_items` (

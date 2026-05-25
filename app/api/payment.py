@@ -1,17 +1,21 @@
 import json
+import logging
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException, Path, Request, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Path, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import get_current_user
-from app.core.database import get_db
+from app.core.database import async_session, get_db
 from app.core.external_client import get_external_client
 from app.models.order import Order
 from app.models.user import User
 from app.schemas.payment import CreatePaymentRequest, PaymentNotifyResponse, PaymentResponse, PaymentStatusResponse
+from app.services.external_platform import ExternalPlatformService
 from app.services.order_service import OrderService
 from app.services.wechat_pay_service import WechatPayService
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/payment", tags=["支付管理"])
 
@@ -25,6 +29,17 @@ def _get_pay_service(client: httpx.AsyncClient = Depends(get_external_client)) -
 
 
 _STATUS_MAP = {0: "待支付", 1: "已支付", 2: "已取消", 3: "已完成"}
+
+
+async def _generate_redemption_codes_task(order_id: int, client: httpx.AsyncClient) -> None:
+    """后台任务: 使用独立 DB session 为订单生成兑换码, 避免阻塞回调响应."""
+    try:
+        async with async_session() as session:
+            svc = OrderService(session)
+            ext_svc = ExternalPlatformService(client)
+            await svc.create_redemption_codes_for_order(order_id, ext_svc)
+    except Exception as e:
+        logger.exception("generate_redemption_codes_task failed: order_id=%s err=%s", order_id, e)
 
 
 @router.post("/native", response_model=PaymentResponse, summary="微信Native支付", description="创建微信Native支付订单，返回扫码支付链接")
@@ -55,7 +70,9 @@ async def create_native_payment(
 @router.post("/notify", response_model=PaymentNotifyResponse, summary="微信支付回调", description="接收微信支付结果通知，验签后更新订单状态")
 async def payment_notify(
     request: Request,
+    background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
+    client: httpx.AsyncClient = Depends(get_external_client),
 ):
     body = await request.body()
     signature = request.headers.get("Wechatpay-Signature", "")
@@ -73,15 +90,10 @@ async def payment_notify(
         return WechatPayService.build_notify_reply()
 
     order_svc = OrderService(db)
-    order = await order_svc.get_order_by_no(order_no)
-    if not order:
-        return WechatPayService.build_notify_reply()
-
-    if order.status == 0:
-        order.status = 1
-        if data.get("transaction_id"):
-            order.transaction_id = data["transaction_id"]
-        await db.commit()
+    order = await order_svc.mark_order_paid(order_no, data.get("transaction_id"))
+    if order:
+        # 异步生成兑换码, 不阻塞回调响应 (微信要求 5s 内响应)
+        background_tasks.add_task(_generate_redemption_codes_task, order.order_id, client)
 
     return WechatPayService.build_notify_reply()
 

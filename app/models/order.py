@@ -1,10 +1,14 @@
 from datetime import datetime
 from decimal import Decimal
+from typing import TYPE_CHECKING
 
 from sqlalchemy import DateTime, ForeignKey, Numeric, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
+
+if TYPE_CHECKING:
+    from app.models.sku import Sku
 
 
 class Order(Base):
@@ -33,7 +37,10 @@ class OrderItem(Base):
     exchange_status: Mapped[int] = mapped_column(nullable=False, default=0, comment="兑换状态: 0=未兑换, 1=已兑换")
     exchange_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True, comment="兑换用户ID")
     expired_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, comment="过期时间")
+    redemption_code: Mapped[str | None] = mapped_column(String(128), nullable=True, comment="兑换码")
+    redemption_status: Mapped[int] = mapped_column(nullable=False, default=0, comment="兑换码生成状态: 0=待生成, 1=生成中, 2=已生成, 3=生成失败")
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())
 
     order: Mapped["Order"] = relationship(back_populates="items")
+    sku: Mapped["Sku"] = relationship(lazy="selectin")

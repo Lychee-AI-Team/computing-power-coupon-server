@@ -47,3 +47,27 @@ class ExternalPlatformService:
         except (httpx.HTTPStatusError, httpx.RequestError, ValueError) as e:
             logger.error("create_user error: %s", e)
             return None
+
+    async def create_redemption(
+        self, name: str, quota: int, count: int = 1, expired_time: int = 0
+    ) -> list[str] | None:
+        try:
+            response = await self.client.post(
+                "/api/redemption/",
+                json={
+                    "name": name,
+                    "quota": quota,
+                    "count": count,
+                    "expired_time": expired_time,
+                },
+            )
+            response.raise_for_status()
+            data = response.json()
+            logger.info("create_redemption response: %s", data)
+            if data.get("success", False):
+                return data.get("data", [])
+            logger.warning("create_redemption failed: %s", data.get("message", ""))
+            return None
+        except (httpx.HTTPStatusError, httpx.RequestError, ValueError) as e:
+            logger.error("create_redemption error: %s", e)
+            return None

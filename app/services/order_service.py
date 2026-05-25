@@ -9,6 +9,7 @@ from sqlalchemy.orm import selectinload
 from app.models.cart import CartItem
 from app.models.order import Order, OrderItem
 from app.models.sku import Sku
+from app.services.external_platform import ExternalPlatformService
 
 _EXPIRE_UNIT_DAYS = {"day": 1, "month": 30, "year": 365}
 
@@ -23,13 +24,16 @@ class OrderService:
         self.db = db
 
     async def list_my_orders(
-        self, user_id: int, page: int, page_size: int, status: int | None = None, order_no: str | None = None
+        self, user_id: int, page: int, page_size: int,
+        status: int | None = None, order_no: str | None = None, pay_channel: int | None = None,
     ) -> tuple[list[Order], int]:
         conditions = [Order.user_id == user_id]
         if status is not None:
             conditions.append(Order.status == status)
         if order_no:
             conditions.append(Order.order_no.ilike(f"%{order_no}%"))
+        if pay_channel is not None:
+            conditions.append(Order.pay_channel == pay_channel)
 
         base_query = select(Order).where(*conditions)
         count_stmt = select(func.count(Order.order_id)).where(*conditions)
@@ -148,6 +152,70 @@ class OrderService:
         for cart_item in cart_items:
             await self.db.delete(cart_item)
 
+        await self.db.commit()
+        await self.db.refresh(order)
+        return order
+
+    async def create_redemption_codes_for_order(
+        self, order_id: int, ext_svc: ExternalPlatformService
+    ) -> None:
+        """逐条抢占 OrderItem 生成兑换码: 行锁 + 立即 commit, 避免并发重复生成与部分失败丢失."""
+        item_stmt = select(OrderItem.item_id).where(
+            OrderItem.order_id == order_id,
+            OrderItem.redemption_status == 0,
+        )
+        item_ids = [row[0] for row in (await self.db.execute(item_stmt)).all()]
+
+        for item_id in item_ids:
+            # 行锁抢占: 同一 item 同时只允许一个协程进入生成流程
+            lock_stmt = (
+                select(OrderItem)
+                .where(OrderItem.item_id == item_id, OrderItem.redemption_status == 0)
+                .with_for_update(skip_locked=True)
+            )
+            item = (await self.db.execute(lock_stmt)).scalar_one_or_none()
+            if not item:
+                continue
+
+            item.redemption_status = 1  # 标记生成中
+            await self.db.commit()
+
+            sku = await self.db.get(Sku, item.sku_id)
+            if not sku:
+                item.redemption_status = 3
+                await self.db.commit()
+                continue
+
+            expired_time = int(item.expired_at.timestamp()) if item.expired_at else 0
+            quota = int(sku.actual_amount)
+            codes = await ext_svc.create_redemption(
+                name=sku.sku_name,
+                quota=quota,
+                count=1,
+                expired_time=expired_time,
+            )
+
+            if codes and len(codes) > 0:
+                item.redemption_code = codes[0]
+                item.redemption_status = 2
+            else:
+                item.redemption_status = 3  # 失败, 留给补偿任务
+            await self.db.commit()
+
+    async def mark_order_paid(self, order_no: str, transaction_id: str | None) -> Order | None:
+        """行锁更新订单状态: 0 -> 1. 已支付则返回 None, 避免重复触发后续流程."""
+        lock_stmt = (
+            select(Order)
+            .where(Order.order_no == order_no)
+            .with_for_update()
+            .options(selectinload(Order.items))
+        )
+        order = (await self.db.execute(lock_stmt)).scalar_one_or_none()
+        if not order or order.status != 0:
+            return None
+        order.status = 1
+        if transaction_id:
+            order.transaction_id = transaction_id
         await self.db.commit()
         await self.db.refresh(order)
         return order
