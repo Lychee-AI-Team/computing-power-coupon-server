@@ -136,7 +136,7 @@ class OrderService:
                         expired_at=_calc_expired_at(sku.expire_type, sku.expire_value),
                     )
                 )
-            total_amount += sku.actual_amount * cart_item.quantity
+            total_amount += sku.face_value * cart_item.quantity
 
         order = Order(
             order_no=uuid.uuid4().hex[:16].upper(),
