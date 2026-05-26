@@ -1,6 +1,8 @@
 from contextlib import asynccontextmanager
+import logging
 import re
 
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from fastapi import FastAPI
 from fastapi.responses import HTMLResponse
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -12,9 +14,15 @@ from app.api.payment import router as payment_router
 from app.api.sku import router as sku_router
 from app.api.user import router as user_router
 from app.core.config import settings
-from app.core.database import Base, engine
-from app.core.external_client import close_external_client, init_external_client
+from app.core.database import Base, async_session, engine
+from app.core.external_client import close_external_client, get_external_client, init_external_client
 from app.core.redis import close_redis, init_redis
+from app.services.order_service import OrderService
+from app.services.wechat_pay_service import WechatPayService
+
+logger = logging.getLogger(__name__)
+
+_scheduler = AsyncIOScheduler()
 
 
 _MULTI_SLASH = re.compile(r"/{2,}")
@@ -36,10 +44,25 @@ async def lifespan(app: FastAPI):
     await init_external_client()
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+    _scheduler.add_job(_cancel_timeout_orders_job, "interval", minutes=1, id="cancel_timeout_orders", replace_existing=True)
+    _scheduler.start()
     yield
+    _scheduler.shutdown(wait=False)
     await close_redis()
     await close_external_client()
     await engine.dispose()
+
+
+async def _cancel_timeout_orders_job() -> None:
+    try:
+        async with async_session() as session:
+            svc = OrderService(session)
+            pay_svc = WechatPayService(await get_external_client())
+            count = await svc.cancel_timeout_orders(pay_svc)
+            if count:
+                logger.info("cancel_timeout_orders: cancelled %d orders", count)
+    except Exception as e:
+        logger.exception("cancel_timeout_orders_job failed: %s", e)
 
 
 app = FastAPI(

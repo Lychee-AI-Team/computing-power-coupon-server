@@ -13,7 +13,7 @@ class SkuCreateRequest(BaseModel):
     face_value: Decimal = Field(..., gt=0, max_digits=10, decimal_places=2, title="面值", description="面值，必须大于0")
     bonus_amount: Decimal = Field(default=0, ge=0, max_digits=10, decimal_places=2, title="赠送金额", description="赠送金额，不小于0")
     actual_amount: Decimal = Field(..., gt=0, max_digits=10, decimal_places=2, title="实际售价", description="实际售价，必须大于0")
-    status: int = Field(default=1, ge=0, le=1, title="状态", description="状态，0-禁用 1-启用")
+    status: int = Field(default=0, ge=0, le=1, title="状态", description="状态，0-禁用 1-启用")
     expire_type: str = Field(default="day", pattern=r"^(day|month|year)$", title="过期类型", description="过期类型，day-天 month-月 year-年")
     expire_value: int = Field(default=90, ge=0, title="过期数值", description="过期数值，不小于0")
 

@@ -49,6 +49,7 @@ def _get_config(for_payment: bool = True) -> WechatPayConfig:
 
 
 _NATIVE_URL = "https://api.mch.weixin.qq.com/v3/pay/transactions/native"
+_CLOSE_URL = "https://api.mch.weixin.qq.com/v3/pay/transactions/out-trade-no/{out_trade_no}/close"
 
 
 class WechatPayService:
@@ -84,6 +85,24 @@ class WechatPayService:
             self._handle_api_error(resp)
         result = resp.json()
         return {"code_url": result["code_url"], "order_no": order_no}
+
+    async def close_order(self, order_no: str) -> None:
+        """关闭微信支付订单，使二维码失效."""
+        cfg = _get_config(for_payment=False)
+        if not all([cfg.appid, cfg.mch_id, cfg.api_v3_key, cfg.private_key, cfg.mch_serial_no]):
+            return
+        url = _CLOSE_URL.format(out_trade_no=order_no)
+        req_body = {"mchid": cfg.mch_id}
+        body_bytes = json.dumps(req_body, ensure_ascii=False).encode()
+        headers = _build_v3_headers(
+            cfg.mch_id, cfg.mch_serial_no, cfg.private_key,
+            "POST", url, body_bytes,
+        )
+        headers["Content-Type"] = "application/json"
+        headers["Accept"] = "application/json"
+        resp = await self.client.post(url, content=body_bytes, headers=headers)
+        if resp.status_code not in (200, 204):
+            self._handle_api_error(resp)
 
     @staticmethod
     def verify_notify_sign(

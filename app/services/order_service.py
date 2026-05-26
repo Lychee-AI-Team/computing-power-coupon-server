@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime, timedelta
 from decimal import Decimal
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -10,8 +10,11 @@ from app.models.cart import CartItem
 from app.models.order import Order, OrderItem
 from app.models.sku import Sku
 from app.services.external_platform import ExternalPlatformService
+from app.services.wechat_pay_service import WechatPayService
 
 _EXPIRE_UNIT_DAYS = {"day": 1, "month": 30, "year": 365}
+
+ORDER_PAYMENT_TIMEOUT_MINUTES = 10
 
 
 def _calc_expired_at(expire_type: str, expire_value: int) -> datetime:
@@ -206,7 +209,8 @@ class OrderService:
             await self.db.commit()
 
     async def mark_order_paid(self, order_no: str, transaction_id: str | None) -> Order | None:
-        """行锁更新订单状态: 0 -> 1. 已支付则返回 None, 避免重复触发后续流程."""
+        """行锁更新订单状态: 0/2 -> 1. 已支付则返回 None, 避免重复触发后续流程.
+        允许从已取消(2)恢复为已支付: 钱付了就是已支付."""
         lock_stmt = (
             select(Order)
             .where(Order.order_no == order_no)
@@ -214,7 +218,7 @@ class OrderService:
             .options(selectinload(Order.items))
         )
         order = (await self.db.execute(lock_stmt)).scalar_one_or_none()
-        if not order or order.status != 0:
+        if not order or order.status not in (0, 2):
             return None
         order.status = 1
         if transaction_id:
@@ -222,3 +226,103 @@ class OrderService:
         await self.db.commit()
         await self.db.refresh(order)
         return order
+
+    async def cancel_timeout_orders(self, pay_svc: WechatPayService | None = None) -> int:
+        """批量取消超时未支付订单 (status: 0 -> 2). 返回受影响行数. 同步关闭微信支付订单, 使二维码失效.
+        使用行锁逐条抢占, 避免与支付回调竞态."""
+        deadline = datetime.now() - timedelta(minutes=ORDER_PAYMENT_TIMEOUT_MINUTES)
+        select_stmt = select(Order.order_no).where(
+            Order.status == 0, Order.created_at < deadline,
+        )
+        candidate_nos = [row[0] for row in (await self.db.execute(select_stmt)).all()]
+        if not candidate_nos:
+            return 0
+
+        cancelled_nos = []
+        for order_no in candidate_nos:
+            lock_stmt = (
+                select(Order)
+                .where(Order.order_no == order_no, Order.status == 0)
+                .with_for_update(skip_locked=True)
+            )
+            order = (await self.db.execute(lock_stmt)).scalar_one_or_none()
+            if not order:
+                continue
+            order.status = 2
+            cancelled_nos.append(order_no)
+            await self.db.commit()
+
+        if pay_svc and cancelled_nos:
+            await self._close_wechat_orders(pay_svc, cancelled_nos)
+        return len(cancelled_nos)
+
+    @staticmethod
+    def _is_order_timeout(order: Order) -> bool:
+        if order.status != 0 or not order.created_at:
+            return False
+        return datetime.now() - order.created_at > timedelta(minutes=ORDER_PAYMENT_TIMEOUT_MINUTES)
+
+    async def check_and_cancel_if_timeout(
+        self, order: Order | None, pay_svc: WechatPayService | None = None,
+    ) -> Order | None:
+        """懒取消: 查询时若订单已超时未支付则就地取消, 并关闭微信支付.
+        使用行锁抢占, 避免与支付回调竞态."""
+        if order is None or not self._is_order_timeout(order):
+            return order
+        lock_stmt = (
+            select(Order)
+            .where(Order.order_id == order.order_id, Order.status == 0)
+            .with_for_update(skip_locked=True)
+        )
+        locked = (await self.db.execute(lock_stmt)).scalar_one_or_none()
+        if not locked:
+            await self.db.refresh(order)
+            return order
+        locked.status = 2
+        await self.db.commit()
+        await self.db.refresh(order)
+        if pay_svc:
+            await self._close_wechat_orders(pay_svc, [order.order_no])
+        return order
+
+    async def check_and_cancel_list_if_timeout(
+        self, orders: list[Order], pay_svc: WechatPayService | None = None,
+    ) -> list[Order]:
+        """懒取消列表中所有超时未支付订单, 并关闭对应微信支付.
+        使用行锁逐条抢占, 避免与支付回调竞态."""
+        timeout_orders = [o for o in orders if self._is_order_timeout(o)]
+        if not timeout_orders:
+            return orders
+
+        cancelled_nos = []
+        cancelled_ids: set[int] = set()
+        for o in timeout_orders:
+            lock_stmt = (
+                select(Order)
+                .where(Order.order_id == o.order_id, Order.status == 0)
+                .with_for_update(skip_locked=True)
+            )
+            locked = (await self.db.execute(lock_stmt)).scalar_one_or_none()
+            if not locked:
+                continue
+            locked.status = 2
+            cancelled_nos.append(o.order_no)
+            cancelled_ids.add(o.order_id)
+            await self.db.commit()
+
+        for o in orders:
+            if o.order_id in cancelled_ids:
+                o.status = 2
+        if pay_svc and cancelled_nos:
+            await self._close_wechat_orders(pay_svc, cancelled_nos)
+        return orders
+
+    @staticmethod
+    async def _close_wechat_orders(pay_svc: WechatPayService, order_nos: list[str]) -> None:
+        import logging
+        logger = logging.getLogger(__name__)
+        for order_no in order_nos:
+            try:
+                await pay_svc.close_order(order_no)
+            except Exception as e:
+                logger.warning("close wechat order failed: %s, err=%s", order_no, e)

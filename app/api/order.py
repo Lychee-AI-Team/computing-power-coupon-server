@@ -3,6 +3,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import get_current_user, require_admin
 from app.core.database import get_db
+from app.core.external_client import get_external_client
 from app.models.user import User
 from app.schemas.order import (
     CreateOrderRequest,
@@ -10,12 +11,17 @@ from app.schemas.order import (
     OrderListResponse,
 )
 from app.services.order_service import OrderService
+from app.services.wechat_pay_service import WechatPayService
 
 router = APIRouter(prefix="/api/order", tags=["订单管理"])
 
 
 def _get_order_service(db: AsyncSession = Depends(get_db)) -> OrderService:
     return OrderService(db)
+
+
+async def _get_pay_service() -> WechatPayService:
+    return WechatPayService(await get_external_client())
 
 
 # --- 用户端接口 ---
@@ -29,8 +35,10 @@ async def list_my_orders(
     pay_channel: int | None = Query(default=None, description="支付方式，1-微信 2-支付宝"),
     user: User = Depends(get_current_user),
     service: OrderService = Depends(_get_order_service),
+    pay_svc: WechatPayService = Depends(_get_pay_service),
 ):
     items, total = await service.list_my_orders(user.id, page, page_size, status, order_no, pay_channel)
+    items = await service.check_and_cancel_list_if_timeout(items, pay_svc)
     return OrderListResponse(
         items=[OrderInfo.model_validate(item) for item in items],
         total=total,
@@ -44,8 +52,10 @@ async def get_my_order(
     order_id: int = Path(..., description="订单ID"),
     user: User = Depends(get_current_user),
     service: OrderService = Depends(_get_order_service),
+    pay_svc: WechatPayService = Depends(_get_pay_service),
 ):
     order = await service.get_order_detail(order_id, user.id)
+    order = await service.check_and_cancel_if_timeout(order, pay_svc)
     if not order:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Order not found")
     return OrderInfo.model_validate(order)
@@ -75,8 +85,10 @@ async def admin_list_orders(
     order_no: str | None = Query(default=None, description="订单编号"),
     admin: User = Depends(require_admin),
     service: OrderService = Depends(_get_order_service),
+    pay_svc: WechatPayService = Depends(_get_pay_service),
 ):
     items, total = await service.list_all_orders(page, page_size, user_id, status, order_no)
+    items = await service.check_and_cancel_list_if_timeout(items, pay_svc)
     return OrderListResponse(
         items=[OrderInfo.model_validate(item) for item in items],
         total=total,
@@ -90,8 +102,10 @@ async def admin_get_order(
     order_id: int = Path(..., description="订单ID"),
     admin: User = Depends(require_admin),
     service: OrderService = Depends(_get_order_service),
+    pay_svc: WechatPayService = Depends(_get_pay_service),
 ):
     order = await service.get_any_order(order_id)
+    order = await service.check_and_cancel_if_timeout(order, pay_svc)
     if not order:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Order not found")
     return OrderInfo.model_validate(order)
