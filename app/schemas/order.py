@@ -1,7 +1,7 @@
 from datetime import datetime
 from decimal import Decimal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from app.schemas.sku import SkuItem
 
@@ -32,6 +32,8 @@ class OrderInfo(BaseModel):
     order_id: int = Field(title="订单ID", description="订单ID")
     order_no: str = Field(title="订单编号", description="订单编号")
     user_id: int = Field(title="用户ID", description="用户ID")
+    username: str | None = Field(default=None, title="用户名", description="用户名")
+    display_name: str | None = Field(default=None, title="显示名称", description="显示名称")
     total_amount: Decimal = Field(title="订单总金额", description="订单总金额")
     status: int = Field(title="订单状态", description="订单状态，0-待支付 1-已支付 2-已取消 3-已完成")
     pay_channel: int | None = Field(default=None, title="支付渠道", description="支付渠道")
@@ -40,6 +42,26 @@ class OrderInfo(BaseModel):
     created_at: datetime = Field(title="创建时间", description="创建时间")
     updated_at: datetime = Field(title="更新时间", description="更新时间")
     items: list[OrderItemInfo] = Field(default=[], title="订单项列表", description="订单项列表")
+
+    @model_validator(mode="before")
+    @classmethod
+    def _extract_user_info(cls, data):
+        if isinstance(data, dict):
+            user = data.get("user")
+            if user is not None:
+                data.setdefault("username", getattr(user, "username", None))
+                data.setdefault("display_name", getattr(user, "display_name", None))
+            return data
+        user = getattr(data, "user", None)
+        if user is not None:
+            try:
+                if not getattr(data, "username", None):
+                    setattr(data, "username", getattr(user, "username", None))
+                if not getattr(data, "display_name", None):
+                    setattr(data, "display_name", getattr(user, "display_name", None))
+            except Exception:
+                pass
+        return data
 
 
 class OrderListResponse(BaseModel):

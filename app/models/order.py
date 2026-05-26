@@ -9,6 +9,7 @@ from app.core.database import Base
 
 if TYPE_CHECKING:
     from app.models.sku import Sku
+    from app.models.user import User
 
 
 class Order(Base):
@@ -26,6 +27,7 @@ class Order(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())
 
     items: Mapped[list["OrderItem"]] = relationship(back_populates="order", lazy="selectin")
+    user: Mapped["User"] = relationship(lazy="selectin")
 
 
 class OrderItem(Base):
