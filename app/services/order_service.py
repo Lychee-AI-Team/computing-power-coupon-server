@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime, timedelta
 from decimal import Decimal
 
-from sqlalchemy import func, select, update
+from sqlalchemy import func, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -229,10 +229,11 @@ class OrderService:
 
     async def cancel_timeout_orders(self, pay_svc: WechatPayService | None = None) -> int:
         """批量取消超时未支付订单 (status: 0 -> 2). 返回受影响行数. 同步关闭微信支付订单, 使二维码失效.
-        使用行锁逐条抢占, 避免与支付回调竞态."""
-        deadline = datetime.now() - timedelta(minutes=ORDER_PAYMENT_TIMEOUT_MINUTES)
+        使用行锁逐条抢占, 避免与支付回调竞态.
+        deadline 用数据库端 NOW() 计算, 避免容器与 MySQL 时区不一致."""
         select_stmt = select(Order.order_no).where(
-            Order.status == 0, Order.created_at < deadline,
+            Order.status == 0,
+            Order.created_at < func.date_sub(func.now(), text(f"INTERVAL {ORDER_PAYMENT_TIMEOUT_MINUTES} MINUTE")),
         )
         candidate_nos = [row[0] for row in (await self.db.execute(select_stmt)).all()]
         if not candidate_nos:
@@ -258,25 +259,29 @@ class OrderService:
 
     @staticmethod
     def _is_order_timeout(order: Order) -> bool:
+        """已废弃的纯 Python 判断, 仅作为快速预过滤. 实际取消以 DB 端 NOW() 为准."""
         if order.status != 0 or not order.created_at:
             return False
-        return datetime.now() - order.created_at > timedelta(minutes=ORDER_PAYMENT_TIMEOUT_MINUTES)
+        return True  # 进入下一步用 DB 端时间精确判断
 
     async def check_and_cancel_if_timeout(
         self, order: Order | None, pay_svc: WechatPayService | None = None,
     ) -> Order | None:
         """懒取消: 查询时若订单已超时未支付则就地取消, 并关闭微信支付.
-        使用行锁抢占, 避免与支付回调竞态."""
-        if order is None or not self._is_order_timeout(order):
+        使用行锁抢占 + DB 端 NOW() 判断, 避免与支付回调竞态及时区问题."""
+        if order is None or order.status != 0:
             return order
         lock_stmt = (
             select(Order)
-            .where(Order.order_id == order.order_id, Order.status == 0)
+            .where(
+                Order.order_id == order.order_id,
+                Order.status == 0,
+                Order.created_at < func.date_sub(func.now(), text(f"INTERVAL {ORDER_PAYMENT_TIMEOUT_MINUTES} MINUTE")),
+            )
             .with_for_update(skip_locked=True)
         )
         locked = (await self.db.execute(lock_stmt)).scalar_one_or_none()
         if not locked:
-            await self.db.refresh(order)
             return order
         locked.status = 2
         await self.db.commit()
@@ -289,17 +294,21 @@ class OrderService:
         self, orders: list[Order], pay_svc: WechatPayService | None = None,
     ) -> list[Order]:
         """懒取消列表中所有超时未支付订单, 并关闭对应微信支付.
-        使用行锁逐条抢占, 避免与支付回调竞态."""
-        timeout_orders = [o for o in orders if self._is_order_timeout(o)]
-        if not timeout_orders:
+        使用行锁逐条抢占 + DB 端 NOW() 判断, 避免与支付回调竞态及时区问题."""
+        candidate_orders = [o for o in orders if o.status == 0]
+        if not candidate_orders:
             return orders
 
         cancelled_nos = []
         cancelled_ids: set[int] = set()
-        for o in timeout_orders:
+        for o in candidate_orders:
             lock_stmt = (
                 select(Order)
-                .where(Order.order_id == o.order_id, Order.status == 0)
+                .where(
+                    Order.order_id == o.order_id,
+                    Order.status == 0,
+                    Order.created_at < func.date_sub(func.now(), text(f"INTERVAL {ORDER_PAYMENT_TIMEOUT_MINUTES} MINUTE")),
+                )
                 .with_for_update(skip_locked=True)
             )
             locked = (await self.db.execute(lock_stmt)).scalar_one_or_none()
