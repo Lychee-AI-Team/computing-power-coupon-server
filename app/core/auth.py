@@ -12,8 +12,8 @@ oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/user/login")
 
 # Role constants
 ROLE_USER = 1
-ROLE_ADMIN = 2
-ROLE_SUPER_ADMIN = 3
+ROLE_ADMIN = 10
+ROLE_SUPER_ADMIN = 100
 
 ADMIN_ROLES = {ROLE_ADMIN, ROLE_SUPER_ADMIN}
 
