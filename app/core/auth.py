@@ -10,7 +10,6 @@ from app.models.user import User
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/user/login")
 
-# Role constants
 ROLE_USER = 1
 ROLE_ADMIN = 10
 ROLE_SUPER_ADMIN = 100
@@ -18,10 +17,7 @@ ROLE_SUPER_ADMIN = 100
 ADMIN_ROLES = {ROLE_ADMIN, ROLE_SUPER_ADMIN}
 
 
-async def get_current_user(
-    token: str = Depends(oauth2_scheme),
-    db: AsyncSession = Depends(get_db),
-) -> User:
+async def get_current_token_payload(token: str = Depends(oauth2_scheme)) -> dict:
     payload = decode_access_token(token)
     if payload is None:
         raise HTTPException(
@@ -36,6 +32,13 @@ async def get_current_user(
             detail="Token has been revoked",
             headers={"WWW-Authenticate": "Bearer"},
         )
+    return payload
+
+
+async def get_current_user(
+    payload: dict = Depends(get_current_token_payload),
+    db: AsyncSession = Depends(get_db),
+) -> User:
     user_id = payload.get("sub")
     if user_id is None:
         raise HTTPException(
@@ -55,10 +58,11 @@ async def get_current_user(
     return user
 
 
-async def require_admin(user: User = Depends(get_current_user)) -> User:
-    if int(user.role) not in ADMIN_ROLES:
+async def require_admin(payload: dict = Depends(get_current_token_payload)) -> dict:
+    role = int(payload.get("role", ROLE_USER))
+    if role not in ADMIN_ROLES:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Admin privileges required",
         )
-    return user
+    return payload

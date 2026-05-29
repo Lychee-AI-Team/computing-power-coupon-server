@@ -8,6 +8,7 @@ from fastapi.responses import HTMLResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from app.api.cart import router as cart_router
+from app.api.exchange import router as exchange_router
 from app.api.health import router as health_router
 from app.api.order import router as order_router
 from app.api.payment import router as payment_router
@@ -15,7 +16,13 @@ from app.api.sku import router as sku_router
 from app.api.user import router as user_router
 from app.core.config import settings
 from app.core.database import Base, async_session, engine
-from app.core.external_client import close_external_client, get_external_client, init_external_client
+from app.core.external_client import (
+    close_external_client,
+    close_wechat_client,
+    get_wechat_client,
+    init_external_client,
+    init_wechat_client,
+)
 from app.core.redis import close_redis, init_redis
 from app.services.order_service import OrderService
 from app.services.wechat_pay_service import WechatPayService
@@ -42,6 +49,7 @@ class NormalizePathMiddleware(BaseHTTPMiddleware):
 async def lifespan(app: FastAPI):
     await init_redis()
     await init_external_client()
+    await init_wechat_client()
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
     _scheduler.add_job(_cancel_timeout_orders_job, "interval", minutes=1, id="cancel_timeout_orders", replace_existing=True)
@@ -50,6 +58,7 @@ async def lifespan(app: FastAPI):
     _scheduler.shutdown(wait=False)
     await close_redis()
     await close_external_client()
+    await close_wechat_client()
     await engine.dispose()
 
 
@@ -57,7 +66,7 @@ async def _cancel_timeout_orders_job() -> None:
     try:
         async with async_session() as session:
             svc = OrderService(session)
-            pay_svc = WechatPayService(await get_external_client())
+            pay_svc = WechatPayService(await get_wechat_client())
             count = await svc.cancel_timeout_orders(pay_svc)
             if count:
                 logger.info("cancel_timeout_orders: cancelled %d orders", count)
@@ -110,6 +119,7 @@ app.include_router(sku_router)
 app.include_router(order_router)
 app.include_router(payment_router)
 app.include_router(cart_router)
+app.include_router(exchange_router)
 
 
 def _customize_openapi():

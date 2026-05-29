@@ -26,6 +26,10 @@ class Settings(BaseSettings):
     EXTERNAL_PLATFORM_ADMIN_TOKEN: str = ""
     EXTERNAL_PLATFORM_ADMIN_ID: str = ""
 
+    # Exchange API
+    EXCHANGE_API_SECRET_KEY: str = ""
+    EXCHANGE_TOKEN_MAX_AGE_SECONDS: int = 0  # 0 = 永久有效
+
     # WeChat Pay V3
     WECHAT_APPID: str = ""
     WECHAT_MCH_ID: str = ""

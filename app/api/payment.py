@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import get_current_user
 from app.core.database import async_session, get_db
-from app.core.external_client import get_external_client
+from app.core.external_client import get_external_client, get_wechat_client
 from app.models.order import Order
 from app.models.user import User
 from app.schemas.payment import CreatePaymentRequest, PaymentNotifyResponse, PaymentResponse, PaymentStatusResponse
@@ -24,7 +24,7 @@ def _get_order_service(db: AsyncSession = Depends(get_db)) -> OrderService:
     return OrderService(db)
 
 
-def _get_pay_service(client: httpx.AsyncClient = Depends(get_external_client)) -> WechatPayService:
+def _get_pay_service(client: httpx.AsyncClient = Depends(get_wechat_client)) -> WechatPayService:
     return WechatPayService(client)
 
 

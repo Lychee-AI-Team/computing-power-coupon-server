@@ -1,14 +1,16 @@
 from datetime import datetime, timezone
 
 from sqlalchemy import select
-from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.security import hash_password, verify_password, create_access_token, decode_access_token
+from app.core.security import create_access_token, decode_access_token
 from app.core.redis import get_redis
 from app.models.user import User
-from app.schemas.user import UserRegisterRequest, UserRegisterResponse, TokenResponse
+from app.schemas.user import TokenResponse
 from app.services.external_platform import ExternalPlatformService
+
+
+ROLE_USER_DEFAULT = 1
 
 
 class UserService:
@@ -16,78 +18,54 @@ class UserService:
         self.db = db
         self.external_service = external_service
 
-    async def register(self, req: UserRegisterRequest) -> tuple[UserRegisterResponse | None, str | None]:
-        existing = await self._get_user_by_username(req.username)
-        if existing:
-            return None, "User already exists"
-
-        external_user = await self.external_service.search_user(req.username)
-
-        external_user_id = None
-        if external_user:
-            external_user_id = external_user.get("id")
-        else:
-            created = await self.external_service.create_user(
-                username=req.username,
-                password=req.password,
-                display_name=req.display_name,
-                role=req.role,
-            )
-            if created is None:
-                return None, "Failed to create user on external platform"
-            external_user_id = created.get("id")
-
-        user = User(
-            username=req.username,
-            password=hash_password(req.password),
-            display_name=req.display_name,
-            role=req.role,
-            external_user_id=external_user_id,
-        )
-        self.db.add(user)
-        try:
-            await self.db.commit()
-        except IntegrityError:
-            await self.db.rollback()
-            return None, "User already exists"
-        await self.db.refresh(user)
-
-        return UserRegisterResponse(
-            id=user.id,
-            username=user.username,
-            display_name=user.display_name,
-            role=user.role,
-        ), None
+    async def register(self, username: str, password: str) -> tuple[bool, str | None]:
+        """委托第三方注册账号。本地 users 表在首次登录时再 upsert。
+        返回 (success, error_message)。"""
+        ok, message = await self.external_service.register(username, password)
+        if not ok:
+            return False, message or "Failed to register on external platform"
+        return True, None
 
     async def login(self, username: str, password: str) -> tuple[TokenResponse | None, str | None]:
-        user = await self._get_user_by_username(username)
-        if not user or not verify_password(password, user.password):
+        """委托第三方校验密码，成功后 upsert 本地 users(id, username) 并签发本地 JWT。"""
+        data = await self.external_service.login(username, password)
+        if not data:
             return None, "Invalid username or password"
 
-        token_data = {"sub": str(user.id), "username": user.username, "role": user.role}
-        access_token = create_access_token(token_data)
+        try:
+            user_id = int(data["id"])
+        except (TypeError, ValueError, KeyError):
+            return None, "Invalid response from external platform"
 
-        return TokenResponse(access_token=access_token), None
+        ext_username = data.get("username") or username
+        role = int(data.get("role", ROLE_USER_DEFAULT))
+
+        local = await self.db.get(User, user_id)
+        if local is None:
+            local = User(id=user_id, username=ext_username)
+            self.db.add(local)
+        elif local.username != ext_username:
+            local.username = ext_username
+        await self.db.commit()
+
+        token = create_access_token({
+            "sub": str(user_id),
+            "username": ext_username,
+            "role": role,
+        })
+        return TokenResponse(access_token=token), None
 
     async def search_users(self, keyword: str) -> list[dict]:
         stmt = select(User).where(User.username.ilike(f"%{keyword}%"))
         result = await self.db.execute(stmt)
         users = result.scalars().all()
-        return [
-            {"id": u.id, "username": u.username, "display_name": u.display_name, "role": u.role}
-            for u in users
-        ]
+        return [{"id": u.id, "username": u.username} for u in users]
 
-    async def _get_user_by_username(self, username: str) -> User | None:
-        stmt = select(User).where(User.username == username)
-        result = await self.db.execute(stmt)
-        return result.scalar_one_or_none()
-
-    async def change_password(self, user: User, old_password: str, new_password: str) -> str | None:
-        if not verify_password(old_password, user.password):
-            return "Old password is incorrect"
-        user.password = hash_password(new_password)
-        await self.db.commit()
+    async def change_password(self, user: User, new_password: str) -> str | None:
+        """使用 admin token 代理第三方修改密码。用户身份由 JWT 决定，不接收前端指定。"""
+        ok = await self.external_service.change_password(user.id, user.username, new_password)
+        if not ok:
+            return "Failed to change password on external platform"
         return None
 
     async def logout(self, token: str) -> None:

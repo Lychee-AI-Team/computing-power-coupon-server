@@ -3,7 +3,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import get_current_user, require_admin
 from app.core.database import get_db
-from app.core.external_client import get_external_client
+from app.core.external_client import get_wechat_client
 from app.models.user import User
 from app.schemas.order import (
     CreateOrderRequest,
@@ -21,7 +21,7 @@ def _get_order_service(db: AsyncSession = Depends(get_db)) -> OrderService:
 
 
 async def _get_pay_service() -> WechatPayService:
-    return WechatPayService(await get_external_client())
+    return WechatPayService(await get_wechat_client())
 
 
 # --- 用户端接口 ---
@@ -83,7 +83,7 @@ async def admin_list_orders(
     user_id: int | None = Query(default=None, description="用户ID"),
     status: int | None = Query(default=None, description="订单状态，0-待支付 1-已支付 2-已取消 3-已完成"),
     order_no: str | None = Query(default=None, description="订单编号"),
-    admin: User = Depends(require_admin),
+    admin: dict = Depends(require_admin),
     service: OrderService = Depends(_get_order_service),
     pay_svc: WechatPayService = Depends(_get_pay_service),
 ):
@@ -100,7 +100,7 @@ async def admin_list_orders(
 @router.get("/admin/{order_id}", response_model=OrderInfo, summary="管理员-订单详情", description="管理员获取任意订单的详细信息")
 async def admin_get_order(
     order_id: int = Path(..., description="订单ID"),
-    admin: User = Depends(require_admin),
+    admin: dict = Depends(require_admin),
     service: OrderService = Depends(_get_order_service),
     pay_svc: WechatPayService = Depends(_get_pay_service),
 ):

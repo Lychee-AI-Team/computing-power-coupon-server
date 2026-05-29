@@ -3,21 +3,15 @@ CREATE DATABASE IF NOT EXISTS `computing_power_coupon` DEFAULT CHARACTER SET utf
 USE `computing_power_coupon`;
 
 CREATE TABLE IF NOT EXISTS `users` (
-    `id` INT NOT NULL AUTO_INCREMENT,
-    `username` VARCHAR(50) NOT NULL,
-    `password` VARCHAR(255) NOT NULL COMMENT 'bcrypt hash',
-    `display_name` VARCHAR(100) NOT NULL,
-    `role` VARCHAR(50) NOT NULL,
-    `external_user_id` INT DEFAULT NULL COMMENT 'User ID from external platform',
-    `created_at` DATETIME DEFAULT CURRENT_TIMESTAMP,
-    `updated_at` DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    `id` INT NOT NULL COMMENT '第三方平台用户ID，与外部系统保持一致',
+    `username` VARCHAR(50) NOT NULL COMMENT '用户名',
     PRIMARY KEY (`id`),
     UNIQUE KEY `uk_username` (`username`),
     KEY `idx_username` (`username`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS `sku_config` (
-    `sku_id` INT NOT NULL AUTO_INCREMENT,
+    `sku_id` INT NOT NULL AUTO_INCREMENT COMMENT 'SKU ID',
     `sku_name` VARCHAR(100) NOT NULL COMMENT 'SKU名称',
     `face_value` DECIMAL(10, 2) NOT NULL COMMENT '面值',
     `bonus_amount` DECIMAL(10, 2) NOT NULL DEFAULT 0 COMMENT '赠送金额',
@@ -25,15 +19,15 @@ CREATE TABLE IF NOT EXISTS `sku_config` (
     `status` TINYINT NOT NULL DEFAULT 1 COMMENT '上下架状态: 0=下架, 1=上架',
     `expire_type` VARCHAR(10) NOT NULL DEFAULT 'day' COMMENT '过期时间类型: day=天, month=月, year=年',
     `expire_value` INT NOT NULL DEFAULT 90 COMMENT '过期时间数量',
-    `created_at` DATETIME DEFAULT CURRENT_TIMESTAMP,
-    `updated_at` DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    `created_at` DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    `updated_at` DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
     PRIMARY KEY (`sku_id`),
     KEY `idx_status` (`status`),
     KEY `idx_sku_name` (`sku_name`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS `orders` (
-    `order_id` INT NOT NULL AUTO_INCREMENT,
+    `order_id` INT NOT NULL AUTO_INCREMENT COMMENT '订单ID',
     `order_no` VARCHAR(64) NOT NULL COMMENT '订单号',
     `user_id` INT NOT NULL COMMENT '用户ID',
     `total_amount` DECIMAL(10, 2) NOT NULL COMMENT '订单总金额',
@@ -41,8 +35,8 @@ CREATE TABLE IF NOT EXISTS `orders` (
     `pay_channel` TINYINT DEFAULT NULL COMMENT '支付渠道: 1=微信, 2=支付宝',
     `transaction_id` VARCHAR(64) DEFAULT NULL COMMENT '微信支付交易号',
     `pay_info` TEXT DEFAULT NULL COMMENT '微信支付信息JSON',
-    `created_at` DATETIME DEFAULT CURRENT_TIMESTAMP,
-    `updated_at` DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    `created_at` DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    `updated_at` DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
     PRIMARY KEY (`order_id`),
     UNIQUE KEY `uk_order_no` (`order_no`),
     KEY `idx_user_id` (`user_id`),
@@ -50,7 +44,7 @@ CREATE TABLE IF NOT EXISTS `orders` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS `order_items` (
-    `item_id` INT NOT NULL AUTO_INCREMENT,
+    `item_id` INT NOT NULL AUTO_INCREMENT COMMENT '订单项ID',
     `order_id` INT NOT NULL COMMENT '订单ID',
     `sku_id` INT NOT NULL COMMENT 'SKU ID',
     `exchange_status` TINYINT NOT NULL DEFAULT 0 COMMENT '兑换状态: 0=未兑换, 1=已兑换',
@@ -58,8 +52,8 @@ CREATE TABLE IF NOT EXISTS `order_items` (
     `expired_at` DATETIME DEFAULT NULL COMMENT '过期时间',
     `redemption_code` VARCHAR(128) DEFAULT NULL COMMENT '兑换码',
     `redemption_status` TINYINT NOT NULL DEFAULT 0 COMMENT '兑换码生成状态: 0=待生成, 1=生成中, 2=已生成, 3=生成失败',
-    `created_at` DATETIME DEFAULT CURRENT_TIMESTAMP,
-    `updated_at` DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    `created_at` DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    `updated_at` DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
     PRIMARY KEY (`item_id`),
     KEY `idx_order_id` (`order_id`),
     KEY `idx_sku_id` (`sku_id`),
@@ -68,12 +62,12 @@ CREATE TABLE IF NOT EXISTS `order_items` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS `cart_items` (
-    `id` INT NOT NULL AUTO_INCREMENT,
+    `id` INT NOT NULL AUTO_INCREMENT COMMENT '购物车项ID',
     `user_id` INT NOT NULL COMMENT '用户ID',
     `sku_id` INT NOT NULL COMMENT 'SKU ID',
     `quantity` INT NOT NULL DEFAULT 1 COMMENT '数量',
-    `created_at` DATETIME DEFAULT CURRENT_TIMESTAMP,
-    `updated_at` DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    `created_at` DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    `updated_at` DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
     PRIMARY KEY (`id`),
     UNIQUE KEY `uk_user_sku` (`user_id`, `sku_id`),
     KEY `idx_user_id` (`user_id`)

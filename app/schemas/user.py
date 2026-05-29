@@ -1,5 +1,3 @@
-from datetime import datetime
-
 from pydantic import BaseModel, Field
 
 
@@ -8,21 +6,8 @@ class UserRegisterRequest(BaseModel):
 
     model_config = {"title": "用户注册请求"}
 
-    username: str = Field(..., min_length=3, max_length=50, title="用户名", description="用户名，3-50个字符")
-    password: str = Field(..., min_length=6, max_length=100, title="密码", description="密码，6-100个字符")
-    display_name: str = Field(..., min_length=1, max_length=100, title="显示名称", description="用户显示名称，1-100个字符")
-    role: int = Field(..., ge=1, title="角色", description="角色，1-普通用户 10-管理员")
-
-
-class UserRegisterResponse(BaseModel):
-    """用户注册成功后返回的信息"""
-
-    model_config = {"title": "用户注册响应"}
-
-    id: int = Field(title="用户ID", description="用户ID")
-    username: str = Field(title="用户名", description="用户名")
-    display_name: str = Field(title="显示名称", description="显示名称")
-    role: int = Field(title="角色", description="角色")
+    username: str = Field(..., min_length=1, max_length=20, title="用户名", description="用户名，长度 ≤ 20")
+    password: str = Field(..., min_length=8, max_length=20, title="密码", description="密码，长度 8-20")
 
 
 class UserLoginRequest(BaseModel):
@@ -50,8 +35,6 @@ class UserSearchItem(BaseModel):
 
     id: int = Field(title="用户ID", description="用户ID")
     username: str = Field(title="用户名", description="用户名")
-    display_name: str = Field(title="显示名称", description="显示名称")
-    role: int = Field(title="角色", description="角色")
 
 
 class UserSearchResponse(BaseModel):
@@ -67,8 +50,7 @@ class ChangePasswordRequest(BaseModel):
 
     model_config = {"title": "修改密码请求"}
 
-    old_password: str = Field(title="旧密码", description="旧密码")
-    new_password: str = Field(..., min_length=6, max_length=100, title="新密码", description="新密码，6-100个字符")
+    new_password: str = Field(..., min_length=8, max_length=20, title="新密码", description="新密码，长度 8-20")
 
 
 class MessageResponse(BaseModel):
@@ -82,12 +64,8 @@ class MessageResponse(BaseModel):
 class CurrentUserResponse(BaseModel):
     """当前登录用户信息"""
 
-    model_config = {"title": "当前用户信息", "from_attributes": True}
+    model_config = {"title": "当前用户信息"}
 
     id: int = Field(title="用户ID", description="用户ID")
     username: str = Field(title="用户名", description="用户名")
-    display_name: str = Field(title="显示名称", description="显示名称")
     role: int = Field(title="角色", description="角色，1-普通用户 10-管理员 100-超级管理员")
-    external_user_id: int | None = Field(default=None, title="外部平台用户ID", description="外部平台用户ID")
-    created_at: datetime = Field(title="创建时间", description="创建时间")
-    updated_at: datetime = Field(title="更新时间", description="更新时间")

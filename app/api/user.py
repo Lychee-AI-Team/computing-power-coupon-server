@@ -2,13 +2,12 @@ import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.auth import get_current_user, oauth2_scheme
+from app.core.auth import get_current_token_payload, get_current_user, oauth2_scheme, ROLE_USER
 from app.core.database import get_db
 from app.core.external_client import get_external_client
 from app.models.user import User
 from app.schemas.user import (
     UserRegisterRequest,
-    UserRegisterResponse,
     UserLoginRequest,
     TokenResponse,
     UserSearchResponse,
@@ -31,17 +30,15 @@ def _get_user_service(
     return UserService(db, external_service)
 
 
-@router.post("/register", response_model=UserRegisterResponse, status_code=status.HTTP_201_CREATED, summary="用户注册", description="注册新用户账号")
+@router.post("/register", response_model=MessageResponse, status_code=status.HTTP_201_CREATED, summary="用户注册", description="代理第三方平台完成账号注册")
 async def register(req: UserRegisterRequest, service: UserService = Depends(_get_user_service)):
-    result, error = await service.register(req)
-    if error:
-        if error == "User already exists":
-            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=error)
-        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=error)
-    return result
+    ok, error = await service.register(req.username, req.password)
+    if not ok:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=error)
+    return {"message": "注册成功"}
 
 
-@router.post("/login", response_model=TokenResponse, summary="用户登录", description="用户名密码登录，返回访问令牌")
+@router.post("/login", response_model=TokenResponse, summary="用户登录", description="调用第三方平台校验用户名密码，成功后签发本地访问令牌")
 async def login(req: UserLoginRequest, service: UserService = Depends(_get_user_service)):
     result, error = await service.login(req.username, req.password)
     if error:
@@ -49,26 +46,33 @@ async def login(req: UserLoginRequest, service: UserService = Depends(_get_user_
     return result
 
 
-@router.get("/search", response_model=UserSearchResponse, summary="搜索用户", description="根据关键字搜索用户，支持用户名和显示名模糊匹配")
+@router.get("/search", response_model=UserSearchResponse, summary="搜索用户", description="根据关键字模糊搜索本地用户")
 async def search_user(keyword: str = Query(description="搜索关键字"), service: UserService = Depends(_get_user_service)):
     users = await service.search_users(keyword)
     return UserSearchResponse(users=[UserSearchItem(**u) for u in users])
 
 
 @router.get("/me", response_model=CurrentUserResponse, summary="当前用户信息", description="根据请求头中的访问令牌返回当前登录用户的信息")
-async def get_me(user: User = Depends(get_current_user)):
-    return CurrentUserResponse.model_validate(user)
+async def get_me(
+    user: User = Depends(get_current_user),
+    payload: dict = Depends(get_current_token_payload),
+):
+    return CurrentUserResponse(
+        id=user.id,
+        username=user.username,
+        role=int(payload.get("role", ROLE_USER)),
+    )
 
 
-@router.put("/password", response_model=MessageResponse, summary="修改密码", description="修改当前登录用户的密码")
+@router.put("/password", response_model=MessageResponse, summary="修改密码", description="代理第三方平台修改当前登录用户的密码")
 async def change_password(
     req: ChangePasswordRequest,
     user: User = Depends(get_current_user),
     service: UserService = Depends(_get_user_service),
 ):
-    error = await service.change_password(user, req.old_password, req.new_password)
+    error = await service.change_password(user, req.new_password)
     if error:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=error)
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=error)
     return {"message": "密码修改成功"}
 
 
