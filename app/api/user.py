@@ -15,6 +15,9 @@ from app.schemas.user import (
     ChangePasswordRequest,
     CurrentUserResponse,
     MessageResponse,
+    WechatQrcodeRequest,
+    WechatQrcodeResponse,
+    WechatScanStatusResponse,
 )
 from app.services.external_platform import ExternalPlatformService
 from app.services.user_service import UserService
@@ -80,3 +83,18 @@ async def change_password(
 async def logout(token: str = Depends(oauth2_scheme), service: UserService = Depends(_get_user_service)):
     await service.logout(token)
     return {"message": "已成功登出"}
+
+
+@router.post("/wechat/qrcode", response_model=WechatQrcodeResponse, summary="微信登录二维码", description="透传第三方平台生成微信登录二维码")
+async def wechat_qrcode(req: WechatQrcodeRequest, client: httpx.AsyncClient = Depends(get_external_client)):
+    external_service = ExternalPlatformService(client)
+    data = await external_service.wechat_qrcode(req.mode)
+    if not data:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Failed to generate WeChat QR code")
+    return WechatQrcodeResponse(qrcode_url=data["qrcode_url"], scene_str=data["scene_str"])
+
+
+@router.get("/wechat/scan-status", response_model=WechatScanStatusResponse, summary="微信扫码登录状态", description="轮询微信扫码状态，确认后自动登录并返回 JWT")
+async def wechat_scan_status(scene_str: str = Query(title="场景值", description="生成二维码时返回的场景字符串"), service: UserService = Depends(_get_user_service)):
+    scan_status, token = await service.wechat_scan_login(scene_str)
+    return WechatScanStatusResponse(status=scan_status, access_token=token)

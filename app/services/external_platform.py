@@ -36,6 +36,72 @@ class ExternalPlatformService:
             logger.error("external_login error: %s", e)
             return None
 
+    async def wechat_qrcode(self, mode: str) -> dict | None:
+        """调用第三方微信二维码生成接口，成功返回 data dict（含 qrcode_url, scene_str），失败返回 None。"""
+        try:
+            async with httpx.AsyncClient(base_url=settings.EXTERNAL_PLATFORM_BASE_URL, timeout=30.0) as client:
+                response = await client.post(
+                    "/api/wechat/qrcode",
+                    json={"mode": mode},
+                )
+            response.raise_for_status()
+            data = response.json()
+            logger.info("external_wechat_qrcode response: %s", data)
+            if not data.get("success", False):
+                return None
+            qr_data = data.get("data")
+            if not isinstance(qr_data, dict):
+                return None
+            return qr_data
+        except (httpx.HTTPStatusError, httpx.RequestError, ValueError) as e:
+            logger.error("external_wechat_qrcode error: %s", e)
+            return None
+
+    async def wechat_scan_login(self, scene_str: str) -> tuple[str, dict | None]:
+        """轮询微信扫码状态。若已确认登录，使用拿到的 session cookie 继续调 /api/user/self 获取用户信息。
+        使用一次性 client 维护 cookie jar，避免污染全局 admin client。
+        返回 (status, user_data)：
+          - status: "pending" | "confirmed" | "expired" | "error"
+          - user_data: 仅在 confirmed 时返回用户信息 dict（含 id, username, role 等）"""
+        try:
+            async with httpx.AsyncClient(base_url=settings.EXTERNAL_PLATFORM_BASE_URL, timeout=30.0) as client:
+                scan_resp = await client.get(
+                    "/api/wechat/scan-status",
+                    params={"scene_str": scene_str},
+                )
+                scan_resp.raise_for_status()
+                scan_data = scan_resp.json()
+                logger.info("external_wechat_scan_status response: %s", scan_data)
+                if not scan_data.get("success", False):
+                    return "error", None
+
+                status_value = ""
+                inner = scan_data.get("data")
+                if isinstance(inner, dict):
+                    status_value = str(inner.get("status", "")).lower()
+                if not status_value:
+                    status_value = str(scan_data.get("status", "")).lower()
+
+                if status_value and status_value != "confirmed":
+                    return status_value, None
+
+                if not any(c.lower() == "session" for c in client.cookies.keys()):
+                    return status_value or "pending", None
+
+                self_resp = await client.get("/api/user/self")
+                self_resp.raise_for_status()
+                self_data = self_resp.json()
+                logger.info("external_user_self response: %s", self_data)
+                if not self_data.get("success", False):
+                    return "error", None
+                user_data = self_data.get("data")
+                if not isinstance(user_data, dict) or "id" not in user_data:
+                    return "error", None
+                return "confirmed", user_data
+        except (httpx.HTTPStatusError, httpx.RequestError, ValueError) as e:
+            logger.error("external_wechat_scan_login error: %s", e)
+            return "error", None
+
     async def register(self, username: str, password: str) -> tuple[bool, str]:
         """调用第三方注册接口，返回 (success, message)。使用一次性 client，避免污染全局 client。"""
         try:

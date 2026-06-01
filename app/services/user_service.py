@@ -55,6 +55,36 @@ class UserService:
         })
         return TokenResponse(access_token=token), None
 
+    async def wechat_scan_login(self, scene_str: str) -> tuple[str, str | None]:
+        """轮询微信扫码状态，confirmed 时 upsert 本地用户并签发 JWT。
+        返回 (status, token_or_none)：status 为 pending/confirmed/expired/error。"""
+        scan_status, data = await self.external_service.wechat_scan_login(scene_str)
+        if scan_status != "confirmed" or not data:
+            return scan_status, None
+
+        try:
+            user_id = int(data["id"])
+        except (TypeError, ValueError, KeyError):
+            return "error", None
+
+        ext_username = data.get("username") or f"wechat_{data.get('wechat_id', user_id)}"
+        role = int(data.get("role", ROLE_USER_DEFAULT))
+
+        local = await self.db.get(User, user_id)
+        if local is None:
+            local = User(id=user_id, username=ext_username)
+            self.db.add(local)
+        elif local.username != ext_username:
+            local.username = ext_username
+        await self.db.commit()
+
+        token = create_access_token({
+            "sub": str(user_id),
+            "username": ext_username,
+            "role": role,
+        })
+        return "confirmed", token
+
     async def search_users(self, keyword: str) -> list[dict]:
         stmt = select(User).where(User.username.ilike(f"%{keyword}%"))
         result = await self.db.execute(stmt)

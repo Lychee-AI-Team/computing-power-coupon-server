@@ -69,3 +69,38 @@ class CurrentUserResponse(BaseModel):
     id: int = Field(title="用户ID", description="用户ID")
     username: str = Field(title="用户名", description="用户名")
     role: int = Field(title="角色", description="角色，1-普通用户 10-管理员 100-超级管理员")
+
+
+class WechatQrcodeRequest(BaseModel):
+    """微信二维码生成请求"""
+
+    model_config = {"title": "微信二维码请求"}
+
+    mode: str = Field(default="login", title="模式", description="二维码模式，如 login")
+
+
+class WechatQrcodeResponse(BaseModel):
+    """微信二维码生成响应"""
+
+    model_config = {"title": "微信二维码响应"}
+
+    qrcode_url: str = Field(title="二维码URL", description="微信二维码图片URL")
+    scene_str: str = Field(title="场景值", description="二维码场景字符串，用于轮询登录状态")
+
+
+class WechatScanStatusRequest(BaseModel):
+    """微信扫码登录状态查询请求"""
+
+    model_config = {"title": "微信扫码状态请求"}
+
+    scene_str: str = Field(title="场景值", description="生成二维码时返回的场景字符串")
+
+
+class WechatScanStatusResponse(BaseModel):
+    """微信扫码登录状态响应"""
+
+    model_config = {"title": "微信扫码状态响应"}
+
+    status: str = Field(title="扫码状态", description="pending-等待扫码 / confirmed-已确认 / expired-已过期 / error-错误")
+    access_token: str | None = Field(default=None, title="访问令牌", description="confirmed 时返回的 JWT 令牌")
+    token_type: str = Field(default="bearer", title="令牌类型", description="令牌类型")
