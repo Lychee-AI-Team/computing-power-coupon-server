@@ -62,12 +62,10 @@ class ExternalPlatformService:
             return None
 
     async def wechat_scan_login(self, scene_str: str) -> tuple[str, dict | None]:
-        """轮询微信扫码状态。若已确认登录，使用拿到的 session cookie 继续调 /api/user/self 获取用户信息。
-        使用一次性 client 维护 cookie jar，避免污染全局 admin client。
-        第三方响应为扁平结构：{success, status, message?}。其中 expired 时 success=false。
+        """轮询微信扫码状态。第三方接口在 confirmed 状态会直接在响应中返回用户信息（data.id 存在），
+        其他状态返回顶层 status 字段（waiting/scanned/expired 等）。
         返回 (status, user_data)：
-          - status: 透传第三方 status 字符串（如 "waiting" | "scanned" | "confirmed" | "expired"），
-                    网络或解析异常时为 "error"
+          - status: "waiting" | "scanned" | "confirmed" | "expired" | "error"
           - user_data: 仅在 confirmed 时返回用户信息 dict（含 id, username, role 等）"""
         try:
             async with httpx.AsyncClient(base_url=settings.EXTERNAL_PLATFORM_BASE_URL, timeout=30.0) as client:
@@ -79,23 +77,16 @@ class ExternalPlatformService:
                 scan_data = scan_resp.json()
                 logger.info("external_wechat_scan_status response: %s", scan_data)
 
-                status_value = str(scan_data.get("status", "")).lower()
-                if not status_value:
-                    return "error", None
+                if scan_data.get("success", False):
+                    user_data = scan_data.get("data")
+                    if isinstance(user_data, dict) and "id" in user_data:
+                        return "confirmed", user_data
 
-                if status_value != "confirmed":
+                status_value = str(scan_data.get("status", "")).lower()
+                if status_value:
                     return status_value, None
 
-                self_resp = await client.get("/api/user/self")
-                self_resp.raise_for_status()
-                self_data = self_resp.json()
-                logger.info("external_user_self response: %s", self_data)
-                if not self_data.get("success", False):
-                    return "error", None
-                user_data = self_data.get("data")
-                if not isinstance(user_data, dict) or "id" not in user_data:
-                    return "error", None
-                return "confirmed", user_data
+                return "error", None
         except (httpx.HTTPStatusError, httpx.RequestError, ValueError) as e:
             logger.error("external_wechat_scan_login error: %s", e)
             return "error", None
