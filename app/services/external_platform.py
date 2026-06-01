@@ -37,7 +37,8 @@ class ExternalPlatformService:
             return None
 
     async def wechat_qrcode(self, mode: str) -> dict | None:
-        """调用第三方微信二维码生成接口，成功返回 data dict（含 qrcode_url, scene_str），失败返回 None。"""
+        """调用第三方微信二维码生成接口，成功返回含 qrcode_url, scene_str 的 dict，失败返回 None。
+        第三方返回为扁平结构：{success, qrcode_url, scene_str, expire_seconds}。"""
         try:
             async with httpx.AsyncClient(base_url=settings.EXTERNAL_PLATFORM_BASE_URL, timeout=30.0) as client:
                 response = await client.post(
@@ -49,10 +50,13 @@ class ExternalPlatformService:
             logger.info("external_wechat_qrcode response: %s", data)
             if not data.get("success", False):
                 return None
-            qr_data = data.get("data")
-            if not isinstance(qr_data, dict):
+            if "qrcode_url" not in data or "scene_str" not in data:
                 return None
-            return qr_data
+            return {
+                "qrcode_url": data["qrcode_url"],
+                "scene_str": data["scene_str"],
+                "expire_seconds": data.get("expire_seconds"),
+            }
         except (httpx.HTTPStatusError, httpx.RequestError, ValueError) as e:
             logger.error("external_wechat_qrcode error: %s", e)
             return None
