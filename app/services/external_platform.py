@@ -64,8 +64,10 @@ class ExternalPlatformService:
     async def wechat_scan_login(self, scene_str: str) -> tuple[str, dict | None]:
         """轮询微信扫码状态。若已确认登录，使用拿到的 session cookie 继续调 /api/user/self 获取用户信息。
         使用一次性 client 维护 cookie jar，避免污染全局 admin client。
+        第三方响应为扁平结构：{success, status, message?}。其中 expired 时 success=false。
         返回 (status, user_data)：
-          - status: "pending" | "confirmed" | "expired" | "error"
+          - status: 透传第三方 status 字符串（如 "waiting" | "scanned" | "confirmed" | "expired"），
+                    网络或解析异常时为 "error"
           - user_data: 仅在 confirmed 时返回用户信息 dict（含 id, username, role 等）"""
         try:
             async with httpx.AsyncClient(base_url=settings.EXTERNAL_PLATFORM_BASE_URL, timeout=30.0) as client:
@@ -76,21 +78,13 @@ class ExternalPlatformService:
                 scan_resp.raise_for_status()
                 scan_data = scan_resp.json()
                 logger.info("external_wechat_scan_status response: %s", scan_data)
-                if not scan_data.get("success", False):
+
+                status_value = str(scan_data.get("status", "")).lower()
+                if not status_value:
                     return "error", None
 
-                status_value = ""
-                inner = scan_data.get("data")
-                if isinstance(inner, dict):
-                    status_value = str(inner.get("status", "")).lower()
-                if not status_value:
-                    status_value = str(scan_data.get("status", "")).lower()
-
-                if status_value and status_value != "confirmed":
+                if status_value != "confirmed":
                     return status_value, None
-
-                if not any(c.lower() == "session" for c in client.cookies.keys()):
-                    return status_value or "pending", None
 
                 self_resp = await client.get("/api/user/self")
                 self_resp.raise_for_status()

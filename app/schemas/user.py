@@ -101,6 +101,6 @@ class WechatScanStatusResponse(BaseModel):
 
     model_config = {"title": "微信扫码状态响应"}
 
-    status: str = Field(title="扫码状态", description="pending-等待扫码 / confirmed-已确认 / expired-已过期 / error-错误")
+    status: str = Field(title="扫码状态", description="透传第三方状态：waiting-等待扫码 / scanned-已扫码待确认 / confirmed-已确认 / expired-已过期 / error-错误")
     access_token: str | None = Field(default=None, title="访问令牌", description="confirmed 时返回的 JWT 令牌")
     token_type: str = Field(default="bearer", title="令牌类型", description="令牌类型")
