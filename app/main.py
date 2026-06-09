@@ -12,6 +12,7 @@ from app.api.exchange import router as exchange_router
 from app.api.health import router as health_router
 from app.api.order import router as order_router
 from app.api.payment import router as payment_router
+from app.api.refund import router as refund_router
 from app.api.sku import router as sku_router
 from app.api.user import router as user_router
 from app.core.config import settings
@@ -118,6 +119,7 @@ app.include_router(user_router)
 app.include_router(sku_router)
 app.include_router(order_router)
 app.include_router(payment_router)
+app.include_router(refund_router)
 app.include_router(cart_router)
 app.include_router(exchange_router)
 

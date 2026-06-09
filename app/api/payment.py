@@ -28,7 +28,7 @@ def _get_pay_service(client: httpx.AsyncClient = Depends(get_wechat_client)) -> 
     return WechatPayService(client)
 
 
-_STATUS_MAP = {0: "待支付", 1: "已支付", 2: "已取消", 3: "已完成"}
+_STATUS_MAP = {0: "待支付", 1: "已支付", 2: "已取消", 3: "已完成", 4: "已退款"}
 
 
 async def _generate_redemption_codes_task(order_id: int, client: httpx.AsyncClient) -> None:

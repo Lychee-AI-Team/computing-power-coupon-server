@@ -19,10 +19,11 @@ class Order(Base):
     order_no: Mapped[str] = mapped_column(String(64), unique=True, nullable=False, comment="订单号")
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False, comment="用户ID")
     total_amount: Mapped[Decimal] = mapped_column(Numeric(10, 2), nullable=False, comment="订单总金额")
-    status: Mapped[int] = mapped_column(nullable=False, default=0, comment="订单状态: 0=待支付, 1=已支付, 2=已取消, 3=已完成")
+    status: Mapped[int] = mapped_column(nullable=False, default=0, comment="订单状态: 0=待支付, 1=已支付, 2=已取消, 3=已完成, 4=已退款")
     pay_channel: Mapped[int | None] = mapped_column(nullable=True, comment="支付渠道: 1=微信, 2=支付宝")
     transaction_id: Mapped[str | None] = mapped_column(String(64), nullable=True, comment="微信支付交易号")
     pay_info: Mapped[str | None] = mapped_column(Text, nullable=True, comment="微信支付信息JSON")
+    refunded_amount: Mapped[Decimal] = mapped_column(Numeric(10, 2), nullable=False, default=Decimal("0"), server_default="0.00", comment="累计已退款金额")
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())
 

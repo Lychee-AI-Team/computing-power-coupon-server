@@ -50,6 +50,8 @@ def _get_config(for_payment: bool = True) -> WechatPayConfig:
 
 _NATIVE_URL = "https://api.mch.weixin.qq.com/v3/pay/transactions/native"
 _CLOSE_URL = "https://api.mch.weixin.qq.com/v3/pay/transactions/out-trade-no/{out_trade_no}/close"
+_REFUND_URL = "https://api.mch.weixin.qq.com/v3/refund/domestic/refunds"
+_REFUND_QUERY_URL = "https://api.mch.weixin.qq.com/v3/refund/domestic/refunds/{out_refund_no}"
 
 
 class WechatPayService:
@@ -103,6 +105,53 @@ class WechatPayService:
         resp = await self.client.post(url, content=body_bytes, headers=headers)
         if resp.status_code not in (200, 204):
             self._handle_api_error(resp)
+
+    async def create_refund(
+        self, out_trade_no: str, out_refund_no: str,
+        refund_fee: int, total_fee: int,
+        reason: str | None, notify_url: str,
+    ) -> dict[str, Any]:
+        """申请微信退款. 金额单位: 分."""
+        cfg = _get_config()
+        req_body: dict[str, Any] = {
+            "out_trade_no": out_trade_no,
+            "out_refund_no": out_refund_no,
+            "notify_url": notify_url,
+            "amount": {
+                "refund": refund_fee,
+                "total": total_fee,
+                "currency": "CNY",
+            },
+        }
+        if reason:
+            req_body["reason"] = reason
+        body_bytes = json.dumps(req_body, ensure_ascii=False).encode()
+
+        headers = _build_v3_headers(
+            cfg.mch_id, cfg.mch_serial_no, cfg.private_key,
+            "POST", _REFUND_URL, body_bytes,
+        )
+        headers["Content-Type"] = "application/json"
+        headers["Accept"] = "application/json"
+
+        resp = await self.client.post(_REFUND_URL, content=body_bytes, headers=headers)
+        if resp.status_code != 200:
+            self._handle_api_error(resp)
+        return resp.json()
+
+    async def query_refund(self, out_refund_no: str) -> dict[str, Any]:
+        """主动查询微信退款状态, 作为回调丢失时的兜底."""
+        cfg = _get_config()
+        url = _REFUND_QUERY_URL.format(out_refund_no=out_refund_no)
+        headers = _build_v3_headers(
+            cfg.mch_id, cfg.mch_serial_no, cfg.private_key,
+            "GET", url, b"",
+        )
+        headers["Accept"] = "application/json"
+        resp = await self.client.get(url, headers=headers)
+        if resp.status_code != 200:
+            self._handle_api_error(resp)
+        return resp.json()
 
     @staticmethod
     def verify_notify_sign(

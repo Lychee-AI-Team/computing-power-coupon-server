@@ -31,10 +31,11 @@ CREATE TABLE IF NOT EXISTS `orders` (
     `order_no` VARCHAR(64) NOT NULL COMMENT '订单号',
     `user_id` INT NOT NULL COMMENT '用户ID',
     `total_amount` DECIMAL(10, 2) NOT NULL COMMENT '订单总金额',
-    `status` TINYINT NOT NULL DEFAULT 0 COMMENT '订单状态: 0=待支付, 1=已支付, 2=已取消, 3=已完成',
+    `status` TINYINT NOT NULL DEFAULT 0 COMMENT '订单状态: 0=待支付, 1=已支付, 2=已取消, 3=已完成, 4=已退款',
     `pay_channel` TINYINT DEFAULT NULL COMMENT '支付渠道: 1=微信, 2=支付宝',
     `transaction_id` VARCHAR(64) DEFAULT NULL COMMENT '微信支付交易号',
     `pay_info` TEXT DEFAULT NULL COMMENT '微信支付信息JSON',
+    `refunded_amount` DECIMAL(10, 2) NOT NULL DEFAULT 0 COMMENT '累计已退款金额',
     `created_at` DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
     `updated_at` DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
     PRIMARY KEY (`order_id`),
@@ -71,4 +72,27 @@ CREATE TABLE IF NOT EXISTS `cart_items` (
     PRIMARY KEY (`id`),
     UNIQUE KEY `uk_user_sku` (`user_id`, `sku_id`),
     KEY `idx_user_id` (`user_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS `refunds` (
+    `refund_id` INT NOT NULL AUTO_INCREMENT COMMENT '退款记录ID',
+    `refund_no` VARCHAR(64) NOT NULL COMMENT '商户退款单号',
+    `order_id` INT NOT NULL COMMENT '订单ID',
+    `order_no` VARCHAR(64) NOT NULL COMMENT '订单号',
+    `refund_amount` DECIMAL(10, 2) NOT NULL COMMENT '本次退款金额(元)',
+    `total_amount` DECIMAL(10, 2) NOT NULL COMMENT '订单原总额(元)',
+    `reason` VARCHAR(255) DEFAULT NULL COMMENT '退款原因',
+    `status` TINYINT NOT NULL DEFAULT 0 COMMENT '退款状态: 0=处理中, 1=成功, 2=失败, 3=异常',
+    `wechat_refund_id` VARCHAR(64) DEFAULT NULL COMMENT '微信退款单号',
+    `transaction_id` VARCHAR(64) DEFAULT NULL COMMENT '原支付交易号',
+    `operator_id` INT NOT NULL COMMENT '操作管理员ID',
+    `channel` TINYINT NOT NULL DEFAULT 1 COMMENT '退款渠道: 1=微信',
+    `error_msg` TEXT DEFAULT NULL COMMENT '失败/异常原因',
+    `notify_payload` TEXT DEFAULT NULL COMMENT '微信回调原始数据',
+    `created_at` DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    `updated_at` DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+    PRIMARY KEY (`refund_id`),
+    UNIQUE KEY `uk_refund_no` (`refund_no`),
+    KEY `idx_order_id` (`order_id`),
+    KEY `idx_status` (`status`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

@@ -30,7 +30,7 @@ async def _get_pay_service() -> WechatPayService:
 async def list_my_orders(
     page: int = Query(default=1, description="页码"),
     page_size: int = Query(default=20, description="每页数量"),
-    status: int | None = Query(default=None, description="订单状态，0-待支付 1-已支付 2-已取消 3-已完成"),
+    status: int | None = Query(default=None, description="订单状态，0-待支付 1-已支付 2-已取消 3-已完成 4-已退款"),
     order_no: str | None = Query(default=None, description="订单编号"),
     pay_channel: int | None = Query(default=None, description="支付方式，1-微信 2-支付宝"),
     user: User = Depends(get_current_user),
@@ -81,7 +81,7 @@ async def admin_list_orders(
     page: int = Query(default=1, description="页码"),
     page_size: int = Query(default=20, description="每页数量"),
     user_id: int | None = Query(default=None, description="用户ID"),
-    status: int | None = Query(default=None, description="订单状态，0-待支付 1-已支付 2-已取消 3-已完成"),
+    status: int | None = Query(default=None, description="订单状态，0-待支付 1-已支付 2-已取消 3-已完成 4-已退款"),
     order_no: str | None = Query(default=None, description="订单编号"),
     admin: dict = Depends(require_admin),
     service: OrderService = Depends(_get_order_service),

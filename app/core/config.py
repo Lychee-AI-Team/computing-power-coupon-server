@@ -38,6 +38,7 @@ class Settings(BaseSettings):
     WECHAT_MCH_SERIAL_NO: str = ""
     WECHAT_PUBLIC_KEY: str = ""
     WECHAT_NOTIFY_URL: str = ""
+    WECHAT_REFUND_NOTIFY_URL: str = ""
 
     # JWT
     JWT_SECRET_KEY: str = "change-me-in-production"
