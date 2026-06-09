@@ -28,6 +28,8 @@ class Refund(Base):
     channel: Mapped[int] = mapped_column(nullable=False, default=1, comment="退款渠道: 1=微信")
     error_msg: Mapped[str | None] = mapped_column(Text, nullable=True, comment="失败/异常原因")
     notify_payload: Mapped[str | None] = mapped_column(Text, nullable=True, comment="微信回调原始数据")
+    item_ids: Mapped[str | None] = mapped_column(Text, nullable=True, comment="本次退款关联的订单项ID列表(JSON)")
+    disable_result: Mapped[str | None] = mapped_column(Text, nullable=True, comment="兑换码作废结果(JSON)")
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())
 

@@ -162,3 +162,18 @@ class ExternalPlatformService:
         except (httpx.HTTPStatusError, httpx.RequestError, ValueError) as e:
             logger.error("create_redemption error: %s", e)
             return None
+
+    async def disable_redemption(self, key: str) -> tuple[bool, str]:
+        """使用 admin token 调用第三方作废兑换码接口。返回 (success, message)。"""
+        try:
+            response = await self.client.put(
+                "/api/redemption/disable",
+                params={"key": key},
+            )
+            response.raise_for_status()
+            data = response.json()
+            logger.info("disable_redemption response: key=%s data=%s", key, data)
+            return bool(data.get("success", False)), data.get("message", "")
+        except (httpx.HTTPStatusError, httpx.RequestError, ValueError) as e:
+            logger.error("disable_redemption error: key=%s err=%s", key, e)
+            return False, f"Request error: {e}"

@@ -37,7 +37,7 @@ class OrderItem(Base):
     item_id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     order_id: Mapped[int] = mapped_column(ForeignKey("orders.order_id"), nullable=False, comment="订单ID")
     sku_id: Mapped[int] = mapped_column(ForeignKey("sku_config.sku_id"), nullable=False, comment="SKU ID")
-    exchange_status: Mapped[int] = mapped_column(nullable=False, default=0, comment="兑换状态: 0=未兑换, 1=已兑换")
+    exchange_status: Mapped[int] = mapped_column(nullable=False, default=0, comment="兑换状态: 0=未兑换, 1=已兑换, 2=已退款")
     exchange_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True, comment="兑换用户ID")
     expired_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, comment="过期时间")
     redemption_code: Mapped[str | None] = mapped_column(String(128), nullable=True, comment="兑换码")

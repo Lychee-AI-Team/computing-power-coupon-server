@@ -12,6 +12,7 @@ class CreateRefundRequest(BaseModel):
     order_id: int = Field(..., gt=0, title="订单ID", description="要退款的订单ID")
     refund_amount: Decimal = Field(..., gt=0, decimal_places=2, title="退款金额", description="本次退款金额(元)，支持部分退款")
     reason: str | None = Field(default=None, max_length=255, title="退款原因", description="退款原因说明")
+    item_ids: list[int] | None = Field(default=None, title="订单项ID列表", description="本次退款关联的订单项ID列表(可选)；传入则退款成功后会作废对应兑换码，仅接受 exchange_status=0 的项")
 
 
 class RefundCreateResponse(BaseModel):
@@ -44,6 +45,8 @@ class RefundInfo(BaseModel):
     operator_id: int = Field(title="操作管理员ID", description="发起退款的管理员ID")
     channel: int = Field(title="退款渠道", description="退款渠道: 1=微信")
     error_msg: str | None = Field(default=None, title="异常信息", description="失败或异常的详细信息")
+    item_ids: str | None = Field(default=None, title="订单项ID列表", description="本次退款关联的订单项ID(JSON字符串)")
+    disable_result: str | None = Field(default=None, title="兑换码作废结果", description="兑换码作废结果(JSON字符串)")
     created_at: datetime = Field(title="创建时间", description="创建时间")
     updated_at: datetime = Field(title="更新时间", description="更新时间")
 

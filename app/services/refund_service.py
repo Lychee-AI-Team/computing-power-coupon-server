@@ -1,3 +1,4 @@
+import json
 import logging
 import uuid
 from decimal import Decimal
@@ -7,8 +8,9 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
-from app.models.order import Order
+from app.models.order import Order, OrderItem
 from app.models.refund import Refund
+from app.services.external_platform import ExternalPlatformService
 from app.services.wechat_pay_service import WechatPayService
 
 logger = logging.getLogger(__name__)
@@ -31,8 +33,14 @@ class RefundService:
         reason: str | None,
         operator_id: int,
         pay_svc: WechatPayService,
+        item_ids: list[int] | None = None,
+        ext_svc: ExternalPlatformService | None = None,
     ) -> Refund:
-        """管理员发起退款. 先落库本地流水, 再调用微信 API, 根据响应同步状态."""
+        """管理员发起退款. 先落库本地流水, 再调用微信 API, 根据响应同步状态.
+
+        若传入 item_ids: 必须全部属于该订单且 exchange_status=0(未兑换); 退款成功后会
+        调用 ext_svc.disable_redemption 作废兑换码, 作废成功的项 exchange_status 改为 2.
+        作废失败仅记录日志, 不影响退款流程."""
         if not settings.WECHAT_REFUND_NOTIFY_URL:
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -64,6 +72,32 @@ class RefundService:
                 detail=f"Refund amount exceeds remaining: max={order.total_amount - already}",
             )
 
+        normalized_item_ids: list[int] = []
+        if item_ids:
+            normalized_item_ids = sorted(set(int(i) for i in item_ids))
+            item_stmt = (
+                select(OrderItem)
+                .where(OrderItem.item_id.in_(normalized_item_ids))
+                .with_for_update()
+            )
+            items = list((await self.db.execute(item_stmt)).scalars().all())
+            if len(items) != len(normalized_item_ids):
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Some item_ids do not exist",
+                )
+            for it in items:
+                if it.order_id != order.order_id:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail=f"item_id={it.item_id} does not belong to order {order.order_id}",
+                    )
+                if it.exchange_status != 0:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail=f"item_id={it.item_id} is not refundable (exchange_status={it.exchange_status})",
+                    )
+
         refund = Refund(
             refund_no=_generate_refund_no(),
             order_id=order.order_id,
@@ -75,6 +109,7 @@ class RefundService:
             transaction_id=order.transaction_id,
             operator_id=operator_id,
             channel=1,
+            item_ids=json.dumps(normalized_item_ids) if normalized_item_ids else None,
         )
         self.db.add(refund)
         await self.db.commit()
@@ -103,9 +138,11 @@ class RefundService:
         wechat_refund_id = result.get("refund_id")
         wechat_status = (result.get("status") or "").upper()
         if wechat_status == "SUCCESS":
-            return await self.apply_refund_success(
+            updated = await self.apply_refund_success(
                 refund.refund_no, wechat_refund_id, _safe_dump(result),
-            ) or refund
+                ext_svc=ext_svc,
+            )
+            return updated or refund
         elif wechat_status == "PROCESSING":
             await self._update_refund_wechat_id(refund.refund_no, wechat_refund_id)
             await self.db.refresh(refund)
@@ -120,8 +157,11 @@ class RefundService:
 
     async def apply_refund_success(
         self, refund_no: str, wechat_refund_id: str | None, notify_payload: str | None,
+        ext_svc: ExternalPlatformService | None = None,
     ) -> Refund | None:
-        """回调成功分支: 幂等更新退款记录和订单累计退款金额."""
+        """回调成功分支: 幂等更新退款记录和订单累计退款金额.
+        若 refund 关联了 item_ids 且传入 ext_svc, 退款成功后会作废对应兑换码.
+        作废失败仅记录日志(不回滚退款)."""
         lock_stmt = select(Refund).where(Refund.refund_no == refund_no).with_for_update()
         refund = (await self.db.execute(lock_stmt)).scalar_one_or_none()
         if not refund:
@@ -149,7 +189,60 @@ class RefundService:
 
         await self.db.commit()
         await self.db.refresh(refund)
+
+        if ext_svc and refund.item_ids:
+            try:
+                item_ids = json.loads(refund.item_ids)
+            except (ValueError, TypeError):
+                item_ids = []
+            if item_ids:
+                await self._disable_redemption_codes(refund, item_ids, ext_svc)
         return refund
+
+    async def _disable_redemption_codes(
+        self, refund: Refund, item_ids: list[int], ext_svc: ExternalPlatformService,
+    ) -> None:
+        """退款成功后逐个调第三方作废兑换码; 成功的项 exchange_status 置 2.
+        失败不抛异常, 仅记录到 refund.disable_result 与日志."""
+        item_stmt = select(OrderItem).where(OrderItem.item_id.in_(item_ids))
+        items = list((await self.db.execute(item_stmt)).scalars().all())
+        results: list[dict] = []
+        any_changed = False
+        for it in items:
+            if not it.redemption_code:
+                results.append({"item_id": it.item_id, "success": False, "message": "no redemption_code"})
+                logger.warning(
+                    "disable_redemption skip: refund_no=%s item_id=%s no code",
+                    refund.refund_no, it.item_id,
+                )
+                continue
+            if it.exchange_status == 2:
+                results.append({"item_id": it.item_id, "success": True, "message": "already refunded"})
+                continue
+            try:
+                ok, msg = await ext_svc.disable_redemption(it.redemption_code)
+            except Exception as e:
+                ok, msg = False, f"exception: {e}"
+                logger.exception(
+                    "disable_redemption raised: refund_no=%s item_id=%s",
+                    refund.refund_no, it.item_id,
+                )
+            results.append({"item_id": it.item_id, "success": ok, "message": msg})
+            if ok:
+                it.exchange_status = 2
+                any_changed = True
+            else:
+                logger.error(
+                    "disable_redemption failed: refund_no=%s item_id=%s msg=%s",
+                    refund.refund_no, it.item_id, msg,
+                )
+
+        refresh_stmt = select(Refund).where(Refund.refund_id == refund.refund_id)
+        latest = (await self.db.execute(refresh_stmt)).scalar_one_or_none()
+        if latest:
+            latest.disable_result = json.dumps(results, ensure_ascii=False)
+        if any_changed or latest:
+            await self.db.commit()
 
     async def apply_refund_failure(
         self, refund_no: str, error_msg: str, notify_payload: str | None,
@@ -246,6 +339,7 @@ class RefundService:
 
     async def sync_refund_from_wechat(
         self, refund_id: int, pay_svc: WechatPayService,
+        ext_svc: ExternalPlatformService | None = None,
     ) -> Refund | None:
         """主动从微信查询退款状态并同步本地, 作为回调丢失的兜底."""
         refund = await self.get_refund_detail(refund_id)
@@ -258,7 +352,9 @@ class RefundService:
         wechat_refund_id = result.get("refund_id")
         payload = _safe_dump(result)
         if wechat_status == "SUCCESS":
-            return await self.apply_refund_success(refund.refund_no, wechat_refund_id, payload)
+            return await self.apply_refund_success(
+                refund.refund_no, wechat_refund_id, payload, ext_svc=ext_svc,
+            )
         if wechat_status == "PROCESSING":
             await self._update_refund_wechat_id(refund.refund_no, wechat_refund_id)
             return await self.get_refund_detail(refund_id)
@@ -268,7 +364,6 @@ class RefundService:
 
 
 def _safe_dump(data: dict) -> str:
-    import json
     try:
         return json.dumps(data, ensure_ascii=False)
     except Exception:

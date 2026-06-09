@@ -5,14 +5,15 @@ from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request, sta
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import get_current_token_payload, require_admin
-from app.core.database import get_db
-from app.core.external_client import get_wechat_client
+from app.core.database import async_session, get_db
+from app.core.external_client import get_external_client, get_wechat_client
 from app.schemas.refund import (
     CreateRefundRequest,
     RefundCreateResponse,
     RefundInfo,
     RefundListResponse,
 )
+from app.services.external_platform import ExternalPlatformService
 from app.services.refund_service import REFUND_STATUS_TEXT, RefundService
 from app.services.wechat_pay_service import WechatPayService
 
@@ -29,17 +30,22 @@ def _get_pay_service(client: httpx.AsyncClient = Depends(get_wechat_client)) -> 
     return WechatPayService(client)
 
 
+def _get_ext_service(client: httpx.AsyncClient = Depends(get_external_client)) -> ExternalPlatformService:
+    return ExternalPlatformService(client)
+
+
 @router.post(
     "/create",
     response_model=RefundCreateResponse,
     summary="管理员发起退款",
-    description="管理员对指定订单发起微信退款，支持部分退款",
+    description="管理员对指定订单发起微信退款，支持部分退款。可选传入 item_ids 关联具体订单项，退款成功后自动作废兑换码并将对应订单项标记为已退款",
 )
 async def create_refund(
     req: CreateRefundRequest,
     payload: dict = Depends(require_admin),
     refund_svc: RefundService = Depends(_get_refund_service),
     pay_svc: WechatPayService = Depends(_get_pay_service),
+    ext_svc: ExternalPlatformService = Depends(_get_ext_service),
 ):
     operator_id = int(payload.get("sub", 0))
     if operator_id <= 0:
@@ -51,6 +57,8 @@ async def create_refund(
         reason=req.reason,
         operator_id=operator_id,
         pay_svc=pay_svc,
+        item_ids=req.item_ids,
+        ext_svc=ext_svc,
     )
     return RefundCreateResponse(
         refund_id=refund.refund_id,
@@ -69,6 +77,7 @@ async def create_refund(
 async def refund_notify(
     request: Request,
     db: AsyncSession = Depends(get_db),
+    ext_client: httpx.AsyncClient = Depends(get_external_client),
 ):
     body = await request.body()
     signature = request.headers.get("Wechatpay-Signature", "")
@@ -96,7 +105,10 @@ async def refund_notify(
 
     refund_svc = RefundService(db)
     if refund_status == "SUCCESS":
-        await refund_svc.apply_refund_success(out_refund_no, wechat_refund_id, payload_str)
+        ext_svc = ExternalPlatformService(ext_client) if ext_client else None
+        await refund_svc.apply_refund_success(
+            out_refund_no, wechat_refund_id, payload_str, ext_svc=ext_svc,
+        )
     else:
         await refund_svc.apply_refund_failure(
             out_refund_no, f"WeChat refund_status={refund_status}", payload_str,
@@ -159,8 +171,9 @@ async def admin_sync_refund(
     _: dict = Depends(require_admin),
     refund_svc: RefundService = Depends(_get_refund_service),
     pay_svc: WechatPayService = Depends(_get_pay_service),
+    ext_svc: ExternalPlatformService = Depends(_get_ext_service),
 ):
-    refund = await refund_svc.sync_refund_from_wechat(refund_id, pay_svc)
+    refund = await refund_svc.sync_refund_from_wechat(refund_id, pay_svc, ext_svc=ext_svc)
     if not refund:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Refund not found")
     return RefundInfo.model_validate(refund)

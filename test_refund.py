@@ -43,6 +43,18 @@ class MockPayService:
         })
 
 
+class MockExtService:
+    """模拟第三方平台服务，记录 disable_redemption 调用情况"""
+    def __init__(self, success: bool = True, message: str = "ok"):
+        self._success = success
+        self._message = message
+        self.disabled_keys: list[str] = []
+
+    async def disable_redemption(self, key: str):
+        self.disabled_keys.append(key)
+        return self._success, self._message
+
+
 passed = 0
 failed = 0
 
@@ -63,11 +75,17 @@ async def run_tests():
 
         # ──── 准备数据 ────
         await db.execute(text("DELETE FROM refunds"))
-        # 重置订单状态
-        await db.execute(text("UPDATE orders SET refunded_amount=0, status=1 WHERE order_id=49"))
-        await db.execute(text("UPDATE orders SET refunded_amount=0, status=3 WHERE order_id=50"))
-        await db.execute(text("UPDATE orders SET status=0 WHERE order_id=51"))
-        await db.execute(text("UPDATE orders SET status=2 WHERE order_id=52"))
+        await db.execute(text("DELETE FROM order_items WHERE order_id IN (49, 50, 51, 52)"))
+        await db.execute(text("DELETE FROM orders WHERE order_id IN (49, 50, 51, 52)"))
+        # 重建测试订单 (49=已支付, 50=已完成, 51=待支付, 52=已取消)
+        await db.execute(text("""
+            INSERT INTO orders (order_id, order_no, user_id, total_amount, status, pay_channel, transaction_id, refunded_amount)
+            VALUES
+              (49, 'TEST_ORDER_49', 13, 100.00, 1, 1, 'WX_TX_49', 0),
+              (50, 'TEST_ORDER_50', 13, 200.00, 3, 1, 'WX_TX_50', 0),
+              (51, 'TEST_ORDER_51', 13, 50.00,  0, 1, NULL,      0),
+              (52, 'TEST_ORDER_52', 13, 80.00,  2, 1, 'WX_TX_52', 0)
+        """))
         await db.commit()
         print("\n=== 数据准备完成 ===")
 
@@ -88,6 +106,10 @@ async def run_tests():
         order = (await db.execute(select(Order).where(Order.order_id == 49))).scalar_one()
         report("订单 status=4(已退款)", order.status == 4)
         report("订单 refunded_amount=100", order.refunded_amount == Decimal("100.00"))
+
+        # 保存 refund 1 的 ID,后续测试 15 HTTP 请求时使用
+        saved_refund_id = refund.refund_id
+        saved_refund_no = refund.refund_no
 
         # ──── 测试 2: 已完成订单部分退款 (微信返回 PROCESSING) ────
         print("\n【测试 2】已完成订单部分退款 — 微信返回 PROCESSING")
@@ -275,9 +297,6 @@ async def run_tests():
         from app.main import app
         from app.core.redis import init_redis, close_redis
 
-        # 保存 ID 避免后续 session 状态问题
-        saved_refund_id = refund.refund_id
-
         await init_redis()
         try:
             transport = ASGITransport(app=app)
@@ -327,6 +346,121 @@ async def run_tests():
                 report("回调返回 SUCCESS", resp.json().get("code") == "SUCCESS")
         finally:
             await close_redis()
+
+        # ──── 测试 16-19: item_ids + 兑换码作废相关 ────
+        print("\n=== 准备 item_ids 测试数据 ===")
+        # 找一个有 sku 的，没有就用任意 sku_id
+        sku_row = (await db.execute(text("SELECT sku_id FROM sku_config LIMIT 1"))).first()
+        sku_id = sku_row[0] if sku_row else 1
+        # 清理可能存在的测试 items
+        await db.execute(text("DELETE FROM order_items WHERE order_id IN (49, 50)"))
+        # 重置订单 49 状态供测试 16+
+        await db.execute(text("UPDATE orders SET refunded_amount=0, status=1 WHERE order_id=49"))
+        await db.execute(text("UPDATE orders SET refunded_amount=0, status=1 WHERE order_id=50"))
+        await db.commit()
+        # 为订单 49 创建 3 个 items, 为订单 50 创建 1 个 item
+        await db.execute(text(f"""
+            INSERT INTO order_items (order_id, sku_id, exchange_status, redemption_code, redemption_status)
+            VALUES
+              (49, {sku_id}, 0, 'CODE-TEST-A', 2),
+              (49, {sku_id}, 0, 'CODE-TEST-B', 2),
+              (49, {sku_id}, 1, 'CODE-TEST-USED', 2),
+              (50, {sku_id}, 0, 'CODE-TEST-X', 2)
+        """))
+        await db.commit()
+        items49 = (await db.execute(text("SELECT item_id, exchange_status, redemption_code FROM order_items WHERE order_id=49 ORDER BY item_id"))).fetchall()
+        items50 = (await db.execute(text("SELECT item_id, exchange_status, redemption_code FROM order_items WHERE order_id=50 ORDER BY item_id"))).fetchall()
+        item49_a, item49_b, item49_used = items49[0][0], items49[1][0], items49[2][0]
+        item50_x = items50[0][0]
+        print(f"  订单49 items: a={item49_a} b={item49_b} used={item49_used}")
+        print(f"  订单50 items: x={item50_x}")
+
+        # ──── 测试 16: 指定 item_ids 退款 + 作废成功
+        print("\n【测试 16】指定 item_ids 退款 + 兑换码作废成功")
+        pay_svc16 = MockPayService("SUCCESS")
+        ext_svc16 = MockExtService(success=True, message="disabled")
+        refund16 = await svc.create_refund(
+            order_id=49, refund_amount=Decimal("20.00"),
+            reason="按项退款", operator_id=1, pay_svc=pay_svc16,
+            item_ids=[item49_a, item49_b], ext_svc=ext_svc16,
+        )
+        report("退款创建成功", refund16 is not None)
+        report("退款状态=1(成功)", refund16.status == 1)
+        report("item_ids 已记录", refund16.item_ids and str(item49_a) in refund16.item_ids)
+        report("disable_redemption 被调用 2 次", len(ext_svc16.disabled_keys) == 2, f"调用={ext_svc16.disabled_keys}")
+        report("兑换码 A 被作废", "CODE-TEST-A" in ext_svc16.disabled_keys)
+        report("兑换码 B 被作废", "CODE-TEST-B" in ext_svc16.disabled_keys)
+
+        refund16_id = refund16.refund_id
+        db.expire_all()
+        item_a_status = (await db.execute(text(f"SELECT exchange_status FROM order_items WHERE item_id={item49_a}"))).scalar()
+        item_b_status = (await db.execute(text(f"SELECT exchange_status FROM order_items WHERE item_id={item49_b}"))).scalar()
+        item_used_status = (await db.execute(text(f"SELECT exchange_status FROM order_items WHERE item_id={item49_used}"))).scalar()
+        report("item A exchange_status=2", item_a_status == 2, f"实际={item_a_status}")
+        report("item B exchange_status=2", item_b_status == 2, f"实际={item_b_status}")
+        report("item used 未受影响(=1)", item_used_status == 1, f"实际={item_used_status}")
+
+        refund16_db = (await db.execute(text(f"SELECT disable_result FROM refunds WHERE refund_id={refund16_id}"))).scalar()
+        report("disable_result 已记录", refund16_db and "success" in refund16_db, f"结果={refund16_db}")
+
+        # ──── 测试 17: 指定已兑换的 item_id 应被拒绝
+        print("\n【测试 17】指定已兑换 item_id 应被拒绝")
+        try:
+            pay_svc17 = MockPayService("SUCCESS")
+            ext_svc17 = MockExtService(success=True)
+            await svc.create_refund(
+                order_id=49, refund_amount=Decimal("10.00"),
+                reason="测试", operator_id=1, pay_svc=pay_svc17,
+                item_ids=[item49_used], ext_svc=ext_svc17,
+            )
+            report("已兑换 item 被拒绝", False, "未抛异常")
+        except HTTPException as e:
+            report("已兑换 item 被拒绝", e.status_code == 400, f"detail={e.detail}")
+            report("disable_redemption 未被调用", len(ext_svc17.disabled_keys) == 0)
+
+        # ──── 测试 18: 指定不属于该订单的 item_id 应被拒绝
+        print("\n【测试 18】指定不属于该订单的 item_id 应被拒绝")
+        # 重置订单 50
+        await db.execute(text("UPDATE orders SET refunded_amount=0, status=1 WHERE order_id=50"))
+        await db.commit()
+        db.expire_all()
+        try:
+            pay_svc18 = MockPayService("SUCCESS")
+            ext_svc18 = MockExtService(success=True)
+            await svc.create_refund(
+                order_id=50, refund_amount=Decimal("10.00"),
+                reason="测试", operator_id=1, pay_svc=pay_svc18,
+                item_ids=[item49_a],  # 属于订单 49, 不属于 50
+                ext_svc=ext_svc18,
+            )
+            report("跨订单 item 被拒绝", False, "未抛异常")
+        except HTTPException as e:
+            report("跨订单 item 被拒绝", e.status_code == 400 and "does not belong" in e.detail, f"detail={e.detail}")
+
+        # ──── 测试 19: 作废失败不回滚退款(只记录)
+        print("\n【测试 19】作废失败不回滚退款")
+        pay_svc19 = MockPayService("SUCCESS")
+        ext_svc19 = MockExtService(success=False, message="key not found")
+        refund19 = await svc.create_refund(
+            order_id=50, refund_amount=Decimal("30.00"),
+            reason="作废失败测试", operator_id=1, pay_svc=pay_svc19,
+            item_ids=[item50_x], ext_svc=ext_svc19,
+        )
+        report("退款仍然成功", refund19.status == 1)
+        refund19_id = refund19.refund_id
+        db.expire_all()
+        item_x_status = (await db.execute(text(f"SELECT exchange_status FROM order_items WHERE item_id={item50_x}"))).scalar()
+        report("item X 状态未变(仍=0)", item_x_status == 0, f"实际={item_x_status}")
+        order50_after = (await db.execute(text("SELECT refunded_amount, status FROM orders WHERE order_id=50"))).first()
+        report("订单 50 退款金额=30", Decimal(str(order50_after[0])) == Decimal("30.00"))
+        report("订单 50 status=4", order50_after[1] == 4)
+
+        refund19_db = (await db.execute(text(f"SELECT disable_result FROM refunds WHERE refund_id={refund19_id}"))).scalar()
+        report("disable_result 记录失败信息", refund19_db and "key not found" in refund19_db, f"结果={refund19_db}")
+
+        # 清理测试 items
+        await db.execute(text("DELETE FROM order_items WHERE order_id IN (49, 50)"))
+        await db.commit()
 
     # ──── 汇总 ────
     print(f"\n{'='*50}")
