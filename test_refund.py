@@ -458,8 +458,126 @@ async def run_tests():
         refund19_db = (await db.execute(text(f"SELECT disable_result FROM refunds WHERE refund_id={refund19_id}"))).scalar()
         report("disable_result 记录失败信息", refund19_db and "key not found" in refund19_db, f"结果={refund19_db}")
 
-        # 清理测试 items
-        await db.execute(text("DELETE FROM order_items WHERE order_id IN (49, 50)"))
+        # ──── 测试 20-23: 全额退款 ────
+        print("\n=== 准备全额退款测试数据 ===")
+        # 新订单 55: total=300, 初始状态已支付, 带 3 个未兑换 items + 1 个已兑换
+        await db.execute(text("DELETE FROM order_items WHERE order_id=55"))
+        await db.execute(text("DELETE FROM orders WHERE order_id=55"))
+        await db.execute(text("""
+            INSERT INTO orders (order_id, order_no, user_id, total_amount, status, pay_channel, transaction_id, refunded_amount)
+            VALUES (55, 'TEST_FULL_REFUND', 13, 300.00, 1, 1, 'WX_TX_55', 0)
+        """))
+        sku_row = (await db.execute(text("SELECT sku_id FROM sku_config LIMIT 1"))).first()
+        sku_id = sku_row[0] if sku_row else 1
+        await db.execute(text(f"""
+            INSERT INTO order_items (order_id, sku_id, exchange_status, redemption_code, redemption_status)
+            VALUES
+              (55, {sku_id}, 0, 'FULL-CODE-A', 2),
+              (55, {sku_id}, 0, 'FULL-CODE-B', 2),
+              (55, {sku_id}, 0, 'FULL-CODE-C', 2),
+              (55, {sku_id}, 1, 'FULL-CODE-USED', 2)
+        """))
+        await db.commit()
+        # 读 item IDs
+        full_items = (await db.execute(text("SELECT item_id, exchange_status, redemption_code FROM order_items WHERE order_id=55 ORDER BY item_id"))).fetchall()
+        full_a, full_b, full_c, full_used = [r[0] for r in full_items]
+        full_codes_ok = [r[2] for r in full_items if r[1] == 0]
+        print(f"  订单55 items: a={full_a} b={full_b} c={full_c} used={full_used}")
+
+        # ──── 测试 20: 全额退款成功（自动收集 + 自动金额）
+        print("\n【测试 20】全额退款 — 自动收集未兑换项 + 自动计算金额 = 300")
+        pay_svc20 = MockPayService("SUCCESS")
+        ext_svc20 = MockExtService(success=True, message="disabled")
+        refund20 = await svc.create_refund(
+            order_id=55, refund_amount=None,
+            reason="全额退款", operator_id=1, pay_svc=pay_svc20,
+            refund_type="full", ext_svc=ext_svc20,
+        )
+        report("全额退款创建成功", refund20 is not None)
+        report("退款状态=1(成功)", refund20.status == 1)
+        refund20_amount = refund20.refund_amount
+        refund20_item_ids = refund20.item_ids
+        refund20_id = refund20.refund_id
+        db.expire_all()
+        report("退款金额=300", refund20_amount == Decimal("300.00"), f"实际={refund20_amount}")
+        report("item_ids 含 3 个未兑换项", refund20_item_ids and refund20_item_ids.count(",") == 2, f"ids={refund20_item_ids}")
+        for code in full_codes_ok:
+            st = (await db.execute(text(f"SELECT exchange_status FROM order_items WHERE redemption_code='{code}'"))).scalar()
+            report(f"兑换码 {code} 已作废(exchange_status=2)", st == 2, f"实际={st}")
+        used_st = (await db.execute(text(f"SELECT exchange_status FROM order_items WHERE item_id={full_used}"))).scalar()
+        report("已兑换项未受影响(=1)", used_st == 1, f"实际={used_st}")
+        order55 = (await db.execute(text("SELECT refunded_amount, status FROM orders WHERE order_id=55"))).first()
+        report("订单 55 累计退款=300", Decimal(str(order55[0])) == Decimal("300.00"))
+        report("订单 55 status=4", order55[1] == 4)
+
+        # ──── 测试 21: 全额退款后再次全额退款报错(无可用 items)
+        print("\n【测试 21】已全额退款后再次申请全额退款应被拒绝")
+        try:
+            pay_svc21 = MockPayService("SUCCESS")
+            ext_svc21 = MockExtService(success=True)
+            await svc.create_refund(
+                order_id=55, refund_amount=None,
+                reason="重复全额", operator_id=1, pay_svc=pay_svc21,
+                refund_type="full", ext_svc=ext_svc21,
+            )
+            report("重复全额被拒绝", False, "未抛异常")
+        except HTTPException as e:
+            report("重复全额被拒绝(无可用items)", e.status_code == 400, f"detail={e.detail}")
+
+        # ──── 测试 22: 部分退款后全额退款（应退剩余金额）
+        print("\n【测试 22】部分退款后全额退款")
+        # 新订单 56: total=200, 先部分退 50, 再全额退 150
+        await db.execute(text("DELETE FROM order_items WHERE order_id=56"))
+        await db.execute(text("DELETE FROM orders WHERE order_id=56"))
+        await db.execute(text("""
+            INSERT INTO orders (order_id, order_no, user_id, total_amount, status, pay_channel, transaction_id, refunded_amount)
+            VALUES (56, 'TEST_PARTIAL_THEN_FULL', 13, 200.00, 1, 1, 'WX_TX_56', 0)
+        """))
+        await db.execute(text(f"""
+            INSERT INTO order_items (order_id, sku_id, exchange_status, redemption_code, redemption_status)
+            VALUES
+              (56, {sku_id}, 0, 'PF-CODE-A', 2),
+              (56, {sku_id}, 0, 'PF-CODE-B', 2)
+        """))
+        await db.commit()
+        pf_items = (await db.execute(text("SELECT item_id, redemption_code FROM order_items WHERE order_id=56 ORDER BY item_id"))).fetchall()
+        pf_a, pf_b = pf_items[0][0], pf_items[1][0]
+        pf_code_a, pf_code_b = pf_items[0][1], pf_items[1][1]
+
+        # 部分退款 50
+        pay_svc22a = MockPayService("SUCCESS")
+        ext_svc22a = MockExtService(success=True, message="disabled")
+        refund22a = await svc.create_refund(
+            order_id=56, refund_amount=Decimal("50.00"),
+            reason="部分先退50", operator_id=1, pay_svc=pay_svc22a,
+            item_ids=[pf_a], ext_svc=ext_svc22a,
+        )
+        report("部分退款成功", refund22a.status == 1)
+        db.expire_all()
+        order56 = (await db.execute(text("SELECT refunded_amount FROM orders WHERE order_id=56"))).first()
+        report("已退款 50", Decimal(str(order56[0])) == Decimal("50.00"), f"实际={order56[0]}")
+
+        # 再全额退款(自动收集剩余 items, 自动金额 = 200-50=150)
+        pay_svc22b = MockPayService("SUCCESS")
+        ext_svc22b = MockExtService(success=True, message="disabled")
+        refund22b = await svc.create_refund(
+            order_id=56, refund_amount=None,
+            reason="全额退剩余", operator_id=1, pay_svc=pay_svc22b,
+            refund_type="full", ext_svc=ext_svc22b,
+        )
+        report("全额退款成功", refund22b.status == 1)
+        report("退款金额=150", refund22b.refund_amount == Decimal("150.00"))
+        report("只对 item B 作废", len(ext_svc22b.disabled_keys) == 1, f"keys={ext_svc22b.disabled_keys}")
+        report("item B 兑换码被作废", pf_code_b in ext_svc22b.disabled_keys)
+
+        refund22b_id = refund22b.refund_id
+        db.expire_all()
+        order56 = (await db.execute(text("SELECT refunded_amount, status FROM orders WHERE order_id=56"))).first()
+        report("订单 56 累计退款=200", Decimal(str(order56[0])) == Decimal("200.00"))
+        report("订单 56 status=4", order56[1] == 4)
+
+        # 清理测试 items (含全额退款用到的订单 55, 56)
+        await db.execute(text("DELETE FROM order_items WHERE order_id IN (49, 50, 55, 56)"))
         await db.commit()
 
     # ──── 汇总 ────

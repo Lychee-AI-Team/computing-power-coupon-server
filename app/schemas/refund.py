@@ -1,7 +1,7 @@
 from datetime import datetime
 from decimal import Decimal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 class CreateRefundRequest(BaseModel):
@@ -10,9 +10,18 @@ class CreateRefundRequest(BaseModel):
     model_config = {"title": "创建退款请求"}
 
     order_id: int = Field(..., gt=0, title="订单ID", description="要退款的订单ID")
-    refund_amount: Decimal = Field(..., gt=0, decimal_places=2, title="退款金额", description="本次退款金额(元)，支持部分退款")
+    refund_type: str = Field(default="partial", title="退款类型", description="退款类型: full=全额退款(自动作废全部未兑换项), partial=部分退款(手动指定金额和项)")
+    refund_amount: Decimal | None = Field(default=None, gt=0, decimal_places=2, title="退款金额", description="本次退款金额(元)；全额退款时无需传入(自动计算为总金额-已退款金额)")
     reason: str | None = Field(default=None, max_length=255, title="退款原因", description="退款原因说明")
-    item_ids: list[int] | None = Field(default=None, title="订单项ID列表", description="本次退款关联的订单项ID列表(可选)；传入则退款成功后会作废对应兑换码，仅接受 exchange_status=0 的项")
+    item_ids: list[int] | None = Field(default=None, title="订单项ID列表", description="本次退款关联的订单项ID列表；全额退款时无需传入(自动收集全部未兑换项)")
+
+    @model_validator(mode="after")
+    def _validate_refund_type(self):
+        if self.refund_type not in ("full", "partial"):
+            raise ValueError("refund_type must be 'full' or 'partial'")
+        if self.refund_type == "partial" and self.refund_amount is None:
+            raise ValueError("refund_amount is required for partial refund")
+        return self
 
 
 class RefundCreateResponse(BaseModel):

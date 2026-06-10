@@ -29,10 +29,11 @@ class RefundService:
     async def create_refund(
         self,
         order_id: int,
-        refund_amount: Decimal,
+        refund_amount: Decimal | None,
         reason: str | None,
         operator_id: int,
         pay_svc: WechatPayService,
+        refund_type: str = "partial",
         item_ids: list[int] | None = None,
         ext_svc: ExternalPlatformService | None = None,
     ) -> Refund:
@@ -40,7 +41,9 @@ class RefundService:
 
         若传入 item_ids: 必须全部属于该订单且 exchange_status=0(未兑换); 退款成功后会
         调用 ext_svc.disable_redemption 作废兑换码, 作废成功的项 exchange_status 改为 2.
-        作废失败仅记录日志, 不影响退款流程."""
+        作废失败仅记录日志, 不影响退款流程.
+
+        当 refund_type='full' 时: 自动收集全部未兑换项, 自动计算退款金额 = 总金额 - 已退款金额."""
         if not settings.WECHAT_REFUND_NOTIFY_URL:
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -65,8 +68,32 @@ class RefundService:
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Only WeChat-paid order with transaction_id can be refunded",
             )
+
         already = order.refunded_amount or Decimal("0")
-        if refund_amount + already > order.total_amount:
+
+        # ── 全额退款: 自动收集未兑换项 + 计算退款金额 ──
+        if refund_type == "full":
+            full_item_stmt = (
+                select(OrderItem)
+                .where(OrderItem.order_id == order.order_id, OrderItem.exchange_status == 0)
+                .with_for_update()
+            )
+            full_items = list((await self.db.execute(full_item_stmt)).scalars().all())
+            if not full_items:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="No refundable items (exchange_status=0) found for full refund",
+                )
+            item_ids = [it.item_id for it in full_items]
+            refund_amount = order.total_amount - already
+            if refund_amount <= 0:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Order already fully refunded",
+                )
+
+        # ── 金额校验(partial / full 均已确定 refund_amount) ──
+        if refund_amount is None or refund_amount + already > order.total_amount:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"Refund amount exceeds remaining: max={order.total_amount - already}",

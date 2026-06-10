@@ -57,6 +57,7 @@ async def create_refund(
         reason=req.reason,
         operator_id=operator_id,
         pay_svc=pay_svc,
+        refund_type=req.refund_type,
         item_ids=req.item_ids,
         ext_svc=ext_svc,
     )
