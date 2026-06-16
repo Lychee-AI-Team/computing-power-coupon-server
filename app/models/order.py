@@ -42,6 +42,7 @@ class OrderItem(Base):
     expired_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, comment="过期时间")
     redemption_code: Mapped[str | None] = mapped_column(String(128), nullable=True, comment="兑换码")
     redemption_status: Mapped[int] = mapped_column(nullable=False, default=0, comment="兑换码生成状态: 0=待生成, 1=生成中, 2=已生成, 3=生成失败")
+    dispatched_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, comment="派发时间, NULL=未派发, 已派发后不可二次派发")
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())
 

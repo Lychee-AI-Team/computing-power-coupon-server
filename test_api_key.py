@@ -314,6 +314,80 @@ async def run_tests():
         report("库内 key_prefix 不含完整明文",
                len(rows[1]) <= 16 and rows[1] != ak1_raw)
 
+        # ──── 测试 12.5: dispatch_unexchanged_items 派发逻辑 ────
+        print("\n【测试 12.5】dispatch_unexchanged_items 派发逻辑")
+
+        order_no_paid = "TKO_9100"  # USER_A 已支付订单, 含 1 个可派发券 CODE_USERA_001
+        order_no_done = "TKO_9101"  # USER_A 已完成订单, 含 1 个可派发券 CODE_USERA_002
+        order_no_pend = "TKO_9102"  # USER_A 待支付订单, 不可派发
+        order_no_rfnd = "TKO_9103"  # USER_A 已退款订单
+        order_no_userb = "TKO_9104"  # USER_B 订单
+
+        # 12.5.1 不存在的订单号 → 404
+        try:
+            await svc.dispatch_unexchanged_items(USER_A, "TKO_NOT_EXIST", 1)
+            report("不存在订单号 抛 404", False)
+        except HTTPException as e:
+            report("不存在订单号 抛 404", e.status_code == 404)
+
+        # 12.5.2 跨用户访问 → 404 (USER_A 访问 USER_B 的订单)
+        try:
+            await svc.dispatch_unexchanged_items(USER_A, order_no_userb, 1)
+            report("跨用户订单号 抛 404", False)
+        except HTTPException as e:
+            report("跨用户订单号 抛 404", e.status_code == 404)
+
+        # 12.5.3 待支付订单 → 400
+        try:
+            await svc.dispatch_unexchanged_items(USER_A, order_no_pend, 1)
+            report("待支付订单 抛 400", False)
+        except HTTPException as e:
+            report("待支付订单 抛 400", e.status_code == 400)
+
+        # 12.5.4 已退款订单(status=4 不在 [1,3]) → 400
+        try:
+            await svc.dispatch_unexchanged_items(USER_A, order_no_rfnd, 1)
+            report("已退款订单 抛 400", False)
+        except HTTPException as e:
+            report("已退款订单 抛 400", e.status_code == 400)
+
+        # 12.5.5 正常派发: TKO_9100 仅 1 个有效券, 请求 5 但只能拿到 1
+        items_d = await svc.dispatch_unexchanged_items(USER_A, order_no_paid, 5)
+        report("9100 实际派发 1 张", len(items_d) == 1)
+        report("9100 兑换码正确", items_d and items_d[0].redemption_code == "CODE_USERA_001")
+        report("9100 派发后写入 dispatched_at", items_d[0].dispatched_at is not None)
+        report("9100 关联 sku 加载", items_d[0].sku is not None)
+        report("9100 关联 order 加载", items_d[0].order is not None)
+
+        # 12.5.6 二次派发同订单 → 已派发的不再返回, 0 张
+        items_d2 = await svc.dispatch_unexchanged_items(USER_A, order_no_paid, 5)
+        report("9100 二次派发返回空", items_d2 == [])
+
+        # 12.5.7 已派发 item 不再出现在 list_unexchanged_items? 当前 list 仍按旧规则返回
+        # (派发标记不影响旧的查询接口); 但应不影响其他订单
+        items_d3 = await svc.dispatch_unexchanged_items(USER_A, order_no_done, 1)
+        report("9101 派发 1 张", len(items_d3) == 1
+               and items_d3[0].redemption_code == "CODE_USERA_002")
+
+        # 12.5.8 dispatched_at 持久化校验: 直接查表
+        row = (await db.execute(text(
+            "SELECT dispatched_at FROM order_items WHERE redemption_code='CODE_USERA_001'"
+        ))).first()
+        report("CODE_USERA_001 dispatched_at 已落库", row[0] is not None)
+        row2 = (await db.execute(text(
+            "SELECT dispatched_at FROM order_items WHERE redemption_code='CODE_USERA_002'"
+        ))).first()
+        report("CODE_USERA_002 dispatched_at 已落库", row2[0] is not None)
+        # 已退款订单的 item 不应被派发(尽管 9206 满足"未兑换+有码"也不应被取到)
+        row3 = (await db.execute(text(
+            "SELECT dispatched_at FROM order_items WHERE redemption_code='CODE_USERA_RFND'"
+        ))).first()
+        report("CODE_USERA_RFND 未被派发", row3[0] is None)
+
+        # 12.5.9 dispatch_count<=0 由路由层 Query(gt=0) 拦截, service 层不强校验; 但 0 应返回空
+        items_d_zero = await svc.dispatch_unexchanged_items(USER_A, order_no_paid, 0)
+        report("dispatch_count=0 返回空", items_d_zero == [])
+
         # ──── 测试 13: delete ────
         print("\n【测试 13】delete")
         # 他人删不了

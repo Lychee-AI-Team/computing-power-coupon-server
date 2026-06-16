@@ -71,6 +71,7 @@ class ExternalCouponItem(BaseModel):
     actual_amount: Decimal = Field(title="实际额度")
     redemption_code: str = Field(title="兑换码")
     expired_at: datetime | None = Field(default=None, title="过期时间")
+    dispatched_at: datetime | None = Field(default=None, title="派发时间", description="本次接口派发记录的时间")
     created_at: datetime = Field(title="创建时间")
 
 
@@ -79,7 +80,7 @@ class ExternalCouponListResponse(BaseModel):
 
     model_config = {"title": "未兑换算力券列表响应"}
 
-    items: list[ExternalCouponItem] = Field(title="未兑换券列表")
-    total: int = Field(title="总数")
-    page: int = Field(title="当前页码")
-    page_size: int = Field(title="每页数量")
+    items: list[ExternalCouponItem] = Field(title="未兑换券列表", description="本次派发的未兑换券, 派发数量为 dispatch_count, 不足时返回实际可派发数量")
+    total: int = Field(title="本次派发数量", description="本次实际派发出去的券数量")
+    page: int = Field(default=1, title="当前页码", description="保留字段, 兼容旧调用")
+    page_size: int = Field(default=20, title="每页数量", description="保留字段, 兼容旧调用")

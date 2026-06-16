@@ -19,13 +19,16 @@ def _get_service(db: AsyncSession = Depends(get_db)) -> ApiKeyService:
 @router.get(
     "/unexchanged",
     response_model=ExternalCouponListResponse,
-    summary="查询未兑换算力券",
-    description="第三方通过 X-API-Key 请求头查询当前 Key 所属用户名下的未兑换算力券列表(含兑换码)",
+    summary="派发未兑换算力券",
+    description=(
+        "第三方通过 X-API-Key 请求头, 按订单号与派发数量从该 Key 所属用户名下未兑换券中派发. "
+        "返回的券会被打上派发标记并持久化, 同一张券不会被二次派发."
+    ),
 )
 async def list_unexchanged_coupons(
     request: Request,
-    page: int = Query(default=1, ge=1, description="页码"),
-    page_size: int = Query(default=20, ge=1, le=100, description="每页数量"),
+    order_no: str = Query(..., min_length=1, max_length=64, description="订单号(必填)"),
+    dispatch_count: int = Query(..., gt=0, description="本次派发数量, 必须大于 0"),
     auth: tuple[User, ApiKey] = Depends(get_user_by_api_key),
     svc: ApiKeyService = Depends(_get_service),
 ):
@@ -35,7 +38,7 @@ async def list_unexchanged_coupons(
     ip = request.client.host if request.client else "unknown"
     await check_rate_limit(f"rate_limit:external_coupon:ip:{ip}", max_requests=200, window_seconds=60)
 
-    items, total = await svc.list_unexchanged_items(user.id, page, page_size)
+    items = await svc.dispatch_unexchanged_items(user.id, order_no, dispatch_count)
     out = [
         ExternalCouponItem(
             item_id=it.item_id,
@@ -47,8 +50,9 @@ async def list_unexchanged_coupons(
             actual_amount=it.sku.actual_amount,
             redemption_code=it.redemption_code,
             expired_at=it.expired_at,
+            dispatched_at=it.dispatched_at,
             created_at=it.created_at,
         )
         for it in items
     ]
-    return ExternalCouponListResponse(items=out, total=total, page=page, page_size=page_size)
+    return ExternalCouponListResponse(items=out, total=len(out), page=1, page_size=dispatch_count)

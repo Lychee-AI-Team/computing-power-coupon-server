@@ -2,6 +2,7 @@ import hashlib
 import secrets
 from datetime import datetime
 
+from fastapi import HTTPException, status
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -131,3 +132,54 @@ class ApiKeyService:
         )
         items = list((await self.db.execute(stmt)).scalars().all())
         return items, total
+
+    async def dispatch_unexchanged_items(
+        self, user_id: int, order_no: str, dispatch_count: int,
+    ) -> list[OrderItem]:
+        """按订单号筛选并派发未兑换券: 命中的项写入 dispatched_at, 已派发的不再返回.
+
+        加 FOR UPDATE SKIP LOCKED 行锁防止并发派发同一批 item; 不足时返回实际数量.
+        """
+        now = datetime.now()
+        order_stmt = select(Order).where(Order.order_no == order_no, Order.user_id == user_id)
+        order = (await self.db.execute(order_stmt)).scalar_one_or_none()
+        if not order:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="订单不存在或不属于当前 API Key 所属用户",
+            )
+        if order.status not in (1, 3):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="订单状态不支持派发(仅已支付/已完成订单可派发)",
+            )
+
+        lock_stmt = (
+            select(OrderItem)
+            .where(
+                OrderItem.order_id == order.order_id,
+                OrderItem.exchange_status == 0,
+                OrderItem.redemption_code.is_not(None),
+                OrderItem.dispatched_at.is_(None),
+                (OrderItem.expired_at.is_(None)) | (OrderItem.expired_at > now),
+            )
+            .order_by(OrderItem.item_id.asc())
+            .limit(dispatch_count)
+            .with_for_update(skip_locked=True)
+        )
+        items = list((await self.db.execute(lock_stmt)).scalars().all())
+        if not items:
+            return []
+
+        for it in items:
+            it.dispatched_at = now
+        await self.db.commit()
+
+        item_ids = [it.item_id for it in items]
+        reload_stmt = (
+            select(OrderItem)
+            .where(OrderItem.item_id.in_(item_ids))
+            .order_by(OrderItem.item_id.asc())
+            .options(selectinload(OrderItem.order), selectinload(OrderItem.sku))
+        )
+        return list((await self.db.execute(reload_stmt)).scalars().all())
