@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.models.order import Order, OrderItem
 from app.models.refund import Refund
+from app.models.sku import Sku
 from app.services.external_platform import ExternalPlatformService
 from app.services.wechat_pay_service import WechatPayService
 
@@ -43,7 +44,7 @@ class RefundService:
         调用 ext_svc.disable_redemption 作废兑换码, 作废成功的项 exchange_status 改为 2.
         作废失败仅记录日志, 不影响退款流程.
 
-        当 refund_type='full' 时: 自动收集全部未兑换项, 自动计算退款金额 = 总金额 - 已退款金额."""
+        当 refund_type='full' 时: 自动收集全部未兑换项, 退款金额 = 这些未兑换项对应 sku.face_value 之和."""
         if not settings.WECHAT_REFUND_NOTIFY_URL:
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -71,7 +72,7 @@ class RefundService:
 
         already = order.refunded_amount or Decimal("0")
 
-        # ── 全额退款: 自动收集未兑换项 + 计算退款金额 ──
+        # ── 全额退款: 自动收集未兑换项 + 计算退款金额 = 未兑换项的 sku 面值之和 ──
         if refund_type == "full":
             full_item_stmt = (
                 select(OrderItem)
@@ -85,11 +86,22 @@ class RefundService:
                     detail="No refundable items (exchange_status=0) found for full refund",
                 )
             item_ids = [it.item_id for it in full_items]
-            refund_amount = order.total_amount - already
+            sku_ids = list({it.sku_id for it in full_items})
+            sku_stmt = select(Sku).where(Sku.sku_id.in_(sku_ids))
+            sku_map = {s.sku_id: s for s in (await self.db.execute(sku_stmt)).scalars().all()}
+            refund_amount = Decimal("0")
+            for it in full_items:
+                sku = sku_map.get(it.sku_id)
+                if not sku:
+                    raise HTTPException(
+                        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                        detail=f"sku not found for item {it.item_id}",
+                    )
+                refund_amount += sku.face_value
             if refund_amount <= 0:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="Order already fully refunded",
+                    detail="Calculated refund amount is zero",
                 )
 
         # ── 金额校验(partial / full 均已确定 refund_amount) ──

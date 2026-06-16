@@ -10,8 +10,8 @@ class CreateRefundRequest(BaseModel):
     model_config = {"title": "创建退款请求"}
 
     order_id: int = Field(..., gt=0, title="订单ID", description="要退款的订单ID")
-    refund_type: str = Field(default="partial", title="退款类型", description="退款类型: full=全额退款(自动作废全部未兑换项), partial=部分退款(手动指定金额和项)")
-    refund_amount: Decimal | None = Field(default=None, gt=0, decimal_places=2, title="退款金额", description="本次退款金额(元)；全额退款时无需传入(自动计算为总金额-已退款金额)")
+    refund_type: str = Field(default="partial", title="退款类型", description="退款类型: full=全额退款(仅退未兑换项, 退款金额=未兑换项对应 sku 面值之和), partial=部分退款(手动指定金额和项)")
+    refund_amount: Decimal | None = Field(default=None, gt=0, decimal_places=2, title="退款金额", description="本次退款金额(元)；全额退款时无需传入(自动按未兑换项 sku 面值之和计算)")
     reason: str | None = Field(default=None, max_length=255, title="退款原因", description="退款原因说明")
     item_ids: list[int] | None = Field(default=None, title="订单项ID列表", description="本次退款关联的订单项ID列表；全额退款时无需传入(自动收集全部未兑换项)")
 

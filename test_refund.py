@@ -349,9 +349,15 @@ async def run_tests():
 
         # ──── 测试 16-19: item_ids + 兑换码作废相关 ────
         print("\n=== 准备 item_ids 测试数据 ===")
-        # 找一个有 sku 的，没有就用任意 sku_id
-        sku_row = (await db.execute(text("SELECT sku_id FROM sku_config LIMIT 1"))).first()
-        sku_id = sku_row[0] if sku_row else 1
+        # 固定一个 face_value=100 的测试 SKU, 避免依赖现有库内 SKU 的面值
+        await db.execute(text("DELETE FROM sku_config WHERE sku_id=9001"))
+        await db.execute(text("""
+            INSERT INTO sku_config (sku_id, sku_name, face_value, bonus_amount, actual_amount,
+                                    status, expire_type, expire_value)
+            VALUES (9001, 'REFUND_TEST_SKU', 100.00, 0, 100.00, 1, 'day', 90)
+        """))
+        await db.commit()
+        sku_id = 9001
         # 清理可能存在的测试 items
         await db.execute(text("DELETE FROM order_items WHERE order_id IN (49, 50)"))
         # 重置订单 49 状态供测试 16+
@@ -467,8 +473,8 @@ async def run_tests():
             INSERT INTO orders (order_id, order_no, user_id, total_amount, status, pay_channel, transaction_id, refunded_amount)
             VALUES (55, 'TEST_FULL_REFUND', 13, 300.00, 1, 1, 'WX_TX_55', 0)
         """))
-        sku_row = (await db.execute(text("SELECT sku_id FROM sku_config LIMIT 1"))).first()
-        sku_id = sku_row[0] if sku_row else 1
+        sku_row = (await db.execute(text("SELECT sku_id FROM sku_config WHERE sku_id=9001"))).first()
+        sku_id = sku_row[0] if sku_row else 9001
         await db.execute(text(f"""
             INSERT INTO order_items (order_id, sku_id, exchange_status, redemption_code, redemption_status)
             VALUES
@@ -557,7 +563,7 @@ async def run_tests():
         order56 = (await db.execute(text("SELECT refunded_amount FROM orders WHERE order_id=56"))).first()
         report("已退款 50", Decimal(str(order56[0])) == Decimal("50.00"), f"实际={order56[0]}")
 
-        # 再全额退款(自动收集剩余 items, 自动金额 = 200-50=150)
+        # 再全额退款(自动收集剩余 items, 自动金额 = 剩余未兑换项 sku 面值之和 = 100)
         pay_svc22b = MockPayService("SUCCESS")
         ext_svc22b = MockExtService(success=True, message="disabled")
         refund22b = await svc.create_refund(
@@ -566,18 +572,19 @@ async def run_tests():
             refund_type="full", ext_svc=ext_svc22b,
         )
         report("全额退款成功", refund22b.status == 1)
-        report("退款金额=150", refund22b.refund_amount == Decimal("150.00"))
+        report("退款金额=100(item B 的 sku 面值)", refund22b.refund_amount == Decimal("100.00"), f"实际={refund22b.refund_amount}")
         report("只对 item B 作废", len(ext_svc22b.disabled_keys) == 1, f"keys={ext_svc22b.disabled_keys}")
         report("item B 兑换码被作废", pf_code_b in ext_svc22b.disabled_keys)
 
         refund22b_id = refund22b.refund_id
         db.expire_all()
         order56 = (await db.execute(text("SELECT refunded_amount, status FROM orders WHERE order_id=56"))).first()
-        report("订单 56 累计退款=200", Decimal(str(order56[0])) == Decimal("200.00"))
+        report("订单 56 累计退款=150(50+100)", Decimal(str(order56[0])) == Decimal("150.00"), f"实际={order56[0]}")
         report("订单 56 status=4", order56[1] == 4)
 
         # 清理测试 items (含全额退款用到的订单 55, 56)
         await db.execute(text("DELETE FROM order_items WHERE order_id IN (49, 50, 55, 56)"))
+        await db.execute(text("DELETE FROM sku_config WHERE sku_id=9001"))
         await db.commit()
 
     # ──── 汇总 ────
