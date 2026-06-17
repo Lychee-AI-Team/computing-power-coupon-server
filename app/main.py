@@ -11,6 +11,7 @@ from app.api.api_key import router as api_key_router
 from app.api.cart import router as cart_router
 from app.api.exchange import router as exchange_router
 from app.api.external_coupon import router as external_coupon_router
+from app.api.external_order import router as external_order_router
 from app.api.health import router as health_router
 from app.api.order import router as order_router
 from app.api.payment import router as payment_router
@@ -126,6 +127,7 @@ app.include_router(cart_router)
 app.include_router(exchange_router)
 app.include_router(api_key_router)
 app.include_router(external_coupon_router)
+app.include_router(external_order_router)
 
 
 def _customize_openapi():

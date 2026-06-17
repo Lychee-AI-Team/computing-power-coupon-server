@@ -98,6 +98,7 @@ class ExchangeService:
         old_status = item.exchange_status
         item.exchange_status = 1
         item.exchange_user_id = user.id
+        item.exchanged_at = datetime.now()
         await self.db.commit()
         await self.db.refresh(item)
 

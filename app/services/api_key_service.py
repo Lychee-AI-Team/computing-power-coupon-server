@@ -184,6 +184,21 @@ class ApiKeyService:
         )
         return list((await self.db.execute(reload_stmt)).scalars().all())
 
+    async def count_remaining_undispatched_items(self, user_id: int, order_no: str) -> int:
+        now = datetime.now()
+        stmt = (
+            select(func.count(OrderItem.item_id))
+            .join(Order, OrderItem.order_id == Order.order_id)
+            .where(
+                Order.user_id == user_id,
+                Order.order_no == order_no,
+                OrderItem.dispatched_at.is_(None),
+                OrderItem.exchange_status == 0,
+                (OrderItem.expired_at.is_(None)) | (OrderItem.expired_at > now),
+            )
+        )
+        return (await self.db.execute(stmt)).scalar() or 0
+
     async def query_coupon_status(
         self, user_id: int, order_no: str, redemption_code: str | None = None,
     ) -> list[OrderItem]:
@@ -209,3 +224,13 @@ class ApiKeyService:
             .options(selectinload(OrderItem.order), selectinload(OrderItem.sku))
         )
         return list((await self.db.execute(stmt)).scalars().all())
+
+    async def list_external_orders(self, user_id: int) -> list[tuple[Order, datetime | None]]:
+        stmt = (
+            select(Order, func.min(OrderItem.expired_at).label("expired_at"))
+            .outerjoin(OrderItem, OrderItem.order_id == Order.order_id)
+            .where(Order.user_id == user_id)
+            .group_by(Order.order_id)
+            .order_by(Order.created_at.desc(), Order.order_id.desc())
+        )
+        return [(order, expired_at) for order, expired_at in (await self.db.execute(stmt)).all()]

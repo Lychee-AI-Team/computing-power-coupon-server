@@ -46,10 +46,10 @@ async def list_unexchanged_coupons(
     await check_rate_limit(f"rate_limit:external_coupon:ip:{ip}", max_requests=200, window_seconds=60)
 
     items = await svc.dispatch_unexchanged_items(user.id, order_no, dispatch_count)
+    remaining_undispatched_count = await svc.count_remaining_undispatched_items(user.id, order_no)
     out = [
         ExternalCouponItem(
             item_id=it.item_id,
-            order_id=it.order_id,
             order_no=it.order.order_no,
             sku_id=it.sku_id,
             sku_name=it.sku.sku_name,
@@ -62,7 +62,13 @@ async def list_unexchanged_coupons(
         )
         for it in items
     ]
-    return ExternalCouponListResponse(items=out, total=len(out), page=1, page_size=dispatch_count)
+    return ExternalCouponListResponse(
+        items=out,
+        total=len(out),
+        remaining_undispatched_count=remaining_undispatched_count,
+        page=1,
+        page_size=dispatch_count,
+    )
 
 
 @router.get(
@@ -93,13 +99,13 @@ async def query_coupon_status(
     out = [
         ExternalCouponStatusItem(
             item_id=it.item_id,
-            order_id=it.order_id,
             order_no=it.order.order_no,
             sku_id=it.sku_id,
             sku_name=it.sku.sku_name,
             redemption_code=it.redemption_code,
             exchange_status=it.exchange_status,
             exchange_status_text=EXCHANGE_STATUS_TEXT.get(it.exchange_status, "未知"),
+            exchanged_at=it.exchanged_at,
             dispatched=it.dispatched_at is not None,
             dispatched_at=it.dispatched_at,
             expired_at=it.expired_at,

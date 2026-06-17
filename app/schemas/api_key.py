@@ -63,7 +63,6 @@ class ExternalCouponItem(BaseModel):
     model_config = {"title": "未兑换算力券项"}
 
     item_id: int = Field(title="订单项ID")
-    order_id: int = Field(title="订单ID")
     order_no: str = Field(title="订单号")
     sku_id: int = Field(title="SKU ID")
     sku_name: str = Field(title="SKU名称")
@@ -82,6 +81,7 @@ class ExternalCouponListResponse(BaseModel):
 
     items: list[ExternalCouponItem] = Field(title="未兑换券列表", description="本次派发的未兑换券, 派发数量为 dispatch_count, 不足时返回实际可派发数量")
     total: int = Field(title="本次派发数量", description="本次实际派发出去的券数量")
+    remaining_undispatched_count: int = Field(title="剩余未派发数量", description="同一订单下未派发、未退款、未兑换、未过期的算力券数量")
     page: int = Field(default=1, title="当前页码", description="保留字段, 兼容旧调用")
     page_size: int = Field(default=20, title="每页数量", description="保留字段, 兼容旧调用")
 
@@ -92,13 +92,13 @@ class ExternalCouponStatusItem(BaseModel):
     model_config = {"title": "算力券状态项"}
 
     item_id: int = Field(title="订单项ID")
-    order_id: int = Field(title="订单ID")
     order_no: str = Field(title="订单号")
     sku_id: int = Field(title="SKU ID")
     sku_name: str = Field(title="SKU名称")
     redemption_code: str | None = Field(default=None, title="兑换码")
     exchange_status: int = Field(title="兑换状态", description="0=未兑换, 1=已兑换, 2=已退款")
     exchange_status_text: str = Field(title="兑换状态文本")
+    exchanged_at: datetime | None = Field(default=None, title="兑换时间")
     dispatched: bool = Field(title="是否已派发", description="True=已通过外部接口派发, False=未派发")
     dispatched_at: datetime | None = Field(default=None, title="派发时间")
     expired_at: datetime | None = Field(default=None, title="过期时间")
@@ -112,3 +112,25 @@ class ExternalCouponStatusResponse(BaseModel):
 
     items: list[ExternalCouponStatusItem] = Field(title="券状态列表")
     total: int = Field(title="结果数量")
+
+
+class ExternalOrderInfo(BaseModel):
+    """外部接口返回的订单信息"""
+
+    model_config = {"title": "外部订单信息"}
+
+    order_no: str = Field(title="订单号")
+    created_at: datetime = Field(title="创建时间")
+    total_amount: Decimal = Field(title="订单总金额")
+    status: int = Field(title="订单状态", description="0=待支付, 1=已支付, 2=已取消, 3=已完成, 4=已退款")
+    refunded_amount: Decimal = Field(title="已退款金额")
+    expired_at: datetime | None = Field(default=None, title="过期时间", description="订单下订单项的最早过期时间")
+
+
+class ExternalOrderListResponse(BaseModel):
+    """外部接口返回的订单列表"""
+
+    model_config = {"title": "外部订单列表响应"}
+
+    items: list[ExternalOrderInfo] = Field(title="订单列表")
+    total: int = Field(title="订单数量")

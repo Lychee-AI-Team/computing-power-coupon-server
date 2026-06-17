@@ -16,6 +16,7 @@ class OrderItemInfo(BaseModel):
     sku_id: int = Field(title="SKU ID", description="SKU ID")
     exchange_status: int = Field(title="兑换状态", description="兑换状态")
     exchange_user_id: int | None = Field(title="兑换用户ID", description="兑换用户ID")
+    exchanged_at: datetime | None = Field(default=None, title="兑换时间", description="兑换时间")
     expired_at: datetime | None = Field(title="过期时间", description="过期时间")
     redemption_code: str | None = Field(default=None, title="兑换码", description="兑换码")
     redemption_status: int = Field(default=0, title="兑换码状态", description="兑换码生成状态: 0=待生成, 1=生成中, 2=已生成, 3=生成失败")

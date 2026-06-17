@@ -1,3 +1,5 @@
+from datetime import datetime
+
 from pydantic import BaseModel, Field
 
 
@@ -16,9 +18,9 @@ class ExternalRedeemData(BaseModel):
     model_config = {"title": "外部兑换结果", "from_attributes": True}
 
     item_id: int = Field(title="订单项ID")
-    order_id: int = Field(title="订单ID")
     exchange_status: int = Field(title="兑换状态")
     exchange_user_id: int | None = Field(title="兑换用户ID")
+    exchanged_at: datetime | None = Field(default=None, title="兑换时间")
     redemption_code: str | None = Field(title="兑换码")
 
 

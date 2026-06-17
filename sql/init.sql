@@ -54,6 +54,7 @@ CREATE TABLE IF NOT EXISTS `order_items` (
     `redemption_code` VARCHAR(128) DEFAULT NULL COMMENT '兑换码',
     `redemption_status` TINYINT NOT NULL DEFAULT 0 COMMENT '兑换码生成状态: 0=待生成, 1=生成中, 2=已生成, 3=生成失败',
     `dispatched_at` DATETIME DEFAULT NULL COMMENT '派发时间, NULL=未派发, 已派发后不可二次派发',
+    `exchanged_at` DATETIME DEFAULT NULL COMMENT '兑换时间, NULL=未兑换',
     `created_at` DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
     `updated_at` DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
     PRIMARY KEY (`item_id`),

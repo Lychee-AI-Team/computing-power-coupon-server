@@ -352,8 +352,12 @@ async def run_tests():
             report("已退款订单 抛 400", e.status_code == 400)
 
         # 12.5.5 正常派发: TKO_9100 仅 1 个有效券, 请求 5 但只能拿到 1
+        remain_before = await svc.count_remaining_undispatched_items(USER_A, order_no_paid)
+        report("9100 派发前剩余未派发未兑换未退款未过期数量=2", remain_before == 2)
         items_d = await svc.dispatch_unexchanged_items(USER_A, order_no_paid, 5)
+        remain_after = await svc.count_remaining_undispatched_items(USER_A, order_no_paid)
         report("9100 实际派发 1 张", len(items_d) == 1)
+        report("9100 派发后剩余未派发未兑换未退款未过期数量=1", remain_after == 1)
         report("9100 兑换码正确", items_d and items_d[0].redemption_code == "CODE_USERA_001")
         report("9100 派发后写入 dispatched_at", items_d[0].dispatched_at is not None)
         report("9100 关联 sku 加载", items_d[0].sku is not None)
@@ -432,6 +436,28 @@ async def run_tests():
         # 12.6.7 关联对象已加载
         report("9200 关联 sku 加载", smap[ITEM_BASE + 0].sku is not None)
         report("9200 关联 order 加载", smap[ITEM_BASE + 0].order is not None)
+
+        # ──── 测试 12.7: list_external_orders 外部订单查询 ────
+        print("\n【测试 12.7】list_external_orders 外部订单查询")
+        orders_a = await svc.list_external_orders(USER_A)
+        orders_b = await svc.list_external_orders(USER_B)
+        order_nos_a = {order.order_no for order, _ in orders_a}
+        order_nos_b = {order.order_no for order, _ in orders_b}
+        report("USER_A 至少返回本测试的 4 个订单", len(orders_a) >= 4)
+        report("USER_A 包含 TKO_9100", "TKO_9100" in order_nos_a)
+        report("USER_A 包含 TKO_9101", "TKO_9101" in order_nos_a)
+        report("USER_A 包含 TKO_9102", "TKO_9102" in order_nos_a)
+        report("USER_A 包含 TKO_9103", "TKO_9103" in order_nos_a)
+        report("USER_A 不含 USER_B 订单", "TKO_9104" not in order_nos_a)
+        report("USER_B 返回 1 个订单", len(orders_b) == 1 and "TKO_9104" in order_nos_b)
+        a_map = {order.order_no: (order, expired_at) for order, expired_at in orders_a}
+        report("订单查询返回订单号", a_map["TKO_9100"][0].order_no == "TKO_9100")
+        report("订单查询返回创建时间", a_map["TKO_9100"][0].created_at is not None)
+        report("订单查询返回订单总金额", a_map["TKO_9100"][0].total_amount == Decimal("100.00"))
+        report("订单查询返回订单状态", a_map["TKO_9100"][0].status == 1)
+        report("订单查询返回已退款金额", a_map["TKO_9100"][0].refunded_amount == Decimal("0.00"))
+        report("订单查询返回最早过期时间", a_map["TKO_9100"][1] is not None)
+        report("订单查询已退款订单状态正确", a_map["TKO_9103"][0].status == 4)
 
         # ──── 测试 13: delete ────
         print("\n【测试 13】delete")
