@@ -183,3 +183,29 @@ class ApiKeyService:
             .options(selectinload(OrderItem.order), selectinload(OrderItem.sku))
         )
         return list((await self.db.execute(reload_stmt)).scalars().all())
+
+    async def query_coupon_status(
+        self, user_id: int, order_no: str, redemption_code: str | None = None,
+    ) -> list[OrderItem]:
+        """按订单号(必填)与兑换码(可选)查询券的兑换状态与派发状态.
+
+        订单不存在或跨用户访问 → 404. 找到订单后返回其 order_items;
+        若传入 redemption_code 则进一步过滤. 不限制订单状态(便于查询历史)."""
+        order_stmt = select(Order).where(Order.order_no == order_no, Order.user_id == user_id)
+        order = (await self.db.execute(order_stmt)).scalar_one_or_none()
+        if not order:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="订单不存在或不属于当前 API Key 所属用户",
+            )
+
+        conds = [OrderItem.order_id == order.order_id]
+        if redemption_code:
+            conds.append(OrderItem.redemption_code == redemption_code)
+        stmt = (
+            select(OrderItem)
+            .where(*conds)
+            .order_by(OrderItem.item_id.asc())
+            .options(selectinload(OrderItem.order), selectinload(OrderItem.sku))
+        )
+        return list((await self.db.execute(stmt)).scalars().all())

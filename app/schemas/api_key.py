@@ -84,3 +84,31 @@ class ExternalCouponListResponse(BaseModel):
     total: int = Field(title="本次派发数量", description="本次实际派发出去的券数量")
     page: int = Field(default=1, title="当前页码", description="保留字段, 兼容旧调用")
     page_size: int = Field(default=20, title="每页数量", description="保留字段, 兼容旧调用")
+
+
+class ExternalCouponStatusItem(BaseModel):
+    """外部接口返回的券状态查询项"""
+
+    model_config = {"title": "算力券状态项"}
+
+    item_id: int = Field(title="订单项ID")
+    order_id: int = Field(title="订单ID")
+    order_no: str = Field(title="订单号")
+    sku_id: int = Field(title="SKU ID")
+    sku_name: str = Field(title="SKU名称")
+    redemption_code: str | None = Field(default=None, title="兑换码")
+    exchange_status: int = Field(title="兑换状态", description="0=未兑换, 1=已兑换, 2=已退款")
+    exchange_status_text: str = Field(title="兑换状态文本")
+    dispatched: bool = Field(title="是否已派发", description="True=已通过外部接口派发, False=未派发")
+    dispatched_at: datetime | None = Field(default=None, title="派发时间")
+    expired_at: datetime | None = Field(default=None, title="过期时间")
+    created_at: datetime = Field(title="创建时间")
+
+
+class ExternalCouponStatusResponse(BaseModel):
+    """外部接口返回的券状态查询响应"""
+
+    model_config = {"title": "算力券状态查询响应"}
+
+    items: list[ExternalCouponStatusItem] = Field(title="券状态列表")
+    total: int = Field(title="结果数量")

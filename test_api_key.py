@@ -388,6 +388,51 @@ async def run_tests():
         items_d_zero = await svc.dispatch_unexchanged_items(USER_A, order_no_paid, 0)
         report("dispatch_count=0 返回空", items_d_zero == [])
 
+        # ──── 测试 12.6: query_coupon_status 状态查询 ────
+        print("\n【测试 12.6】query_coupon_status 状态查询")
+
+        # 12.6.1 不存在订单号 → 404
+        try:
+            await svc.query_coupon_status(USER_A, "TKO_NOT_EXIST")
+            report("状态查询: 不存在订单号 抛 404", False)
+        except HTTPException as e:
+            report("状态查询: 不存在订单号 抛 404", e.status_code == 404)
+
+        # 12.6.2 跨用户访问 → 404
+        try:
+            await svc.query_coupon_status(USER_A, order_no_userb)
+            report("状态查询: 跨用户订单号 抛 404", False)
+        except HTTPException as e:
+            report("状态查询: 跨用户订单号 抛 404", e.status_code == 404)
+
+        # 12.6.3 9100 含 4 个 item: 9200(已派发,未兑换), 9201(已兑换), 9202(无码,未兑换), 9203(已过期,未兑换)
+        items_s = await svc.query_coupon_status(USER_A, order_no_paid)
+        report("9100 状态查询返回 4 项", len(items_s) == 4)
+        # 检查派发状态: 9200 之前已被派发; 其余未派发
+        smap = {it.item_id: it for it in items_s}
+        report("9200 dispatched_at 非空", smap[ITEM_BASE + 0].dispatched_at is not None)
+        report("9201 dispatched_at 为空", smap[ITEM_BASE + 1].dispatched_at is None)
+        report("9201 已兑换", smap[ITEM_BASE + 1].exchange_status == 1)
+        report("9202 未兑换", smap[ITEM_BASE + 2].exchange_status == 0)
+        report("9203 未兑换", smap[ITEM_BASE + 3].exchange_status == 0)
+
+        # 12.6.4 已退款订单(status=4) 也支持查询(不限制订单状态)
+        items_s2 = await svc.query_coupon_status(USER_A, order_no_rfnd)
+        report("已退款订单可查询状态", len(items_s2) == 1)
+
+        # 12.6.5 redemption_code 精确过滤
+        items_s3 = await svc.query_coupon_status(USER_A, order_no_paid, redemption_code="CODE_USERA_001")
+        report("按兑换码过滤 命中 1 项", len(items_s3) == 1
+               and items_s3[0].redemption_code == "CODE_USERA_001")
+
+        # 12.6.6 错误兑换码 → 空
+        items_s4 = await svc.query_coupon_status(USER_A, order_no_paid, redemption_code="NO_SUCH_CODE")
+        report("错误兑换码 返回空", items_s4 == [])
+
+        # 12.6.7 关联对象已加载
+        report("9200 关联 sku 加载", smap[ITEM_BASE + 0].sku is not None)
+        report("9200 关联 order 加载", smap[ITEM_BASE + 0].order is not None)
+
         # ──── 测试 13: delete ────
         print("\n【测试 13】delete")
         # 他人删不了
