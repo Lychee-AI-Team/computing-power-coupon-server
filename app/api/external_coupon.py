@@ -16,7 +16,16 @@ from app.services.api_key_service import ApiKeyService
 
 router = APIRouter(prefix="/api/external/coupons", tags=["外部接口-未兑换券"])
 
-EXCHANGE_STATUS_TEXT = {0: "未兑换", 1: "已兑换", 2: "已退款"}
+EXCHANGE_STATUS_TEXT = {0: "未兑换", 1: "已兑换", 2: "已退款", 3: "已过期"}
+
+
+def _external_coupon_status(exchange_status: int, expired_at) -> int:
+    if exchange_status == 0 and expired_at is not None:
+        from datetime import datetime
+
+        if expired_at <= datetime.now():
+            return 3
+    return exchange_status
 
 
 def _get_service(db: AsyncSession = Depends(get_db)) -> ApiKeyService:
@@ -96,21 +105,23 @@ async def query_coupon_status(
     await check_rate_limit(f"rate_limit:external_coupon:ip:{ip}", max_requests=200, window_seconds=60)
 
     items = await svc.query_coupon_status(user.id, order_no, redemption_code)
-    out = [
-        ExternalCouponStatusItem(
-            item_id=it.item_id,
-            order_no=it.order.order_no,
-            sku_id=it.sku_id,
-            sku_name=it.sku.sku_name,
-            redemption_code=it.redemption_code,
-            exchange_status=it.exchange_status,
-            exchange_status_text=EXCHANGE_STATUS_TEXT.get(it.exchange_status, "未知"),
-            exchanged_at=it.exchanged_at,
-            dispatched=it.dispatched_at is not None,
-            dispatched_at=it.dispatched_at,
-            expired_at=it.expired_at,
-            created_at=it.created_at,
+    out = []
+    for it in items:
+        status_ = _external_coupon_status(it.exchange_status, it.expired_at)
+        out.append(
+            ExternalCouponStatusItem(
+                item_id=it.item_id,
+                order_no=it.order.order_no,
+                sku_id=it.sku_id,
+                sku_name=it.sku.sku_name,
+                redemption_code=it.redemption_code,
+                exchange_status=status_,
+                exchange_status_text=EXCHANGE_STATUS_TEXT.get(status_, "未知"),
+                exchanged_at=it.exchanged_at,
+                dispatched=it.dispatched_at is not None,
+                dispatched_at=it.dispatched_at,
+                expired_at=it.expired_at,
+                created_at=it.created_at,
+            )
         )
-        for it in items
-    ]
     return ExternalCouponStatusResponse(items=out, total=len(out))

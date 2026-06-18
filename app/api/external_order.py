@@ -1,3 +1,5 @@
+from decimal import Decimal
+
 from fastapi import APIRouter, Depends, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -10,6 +12,12 @@ from app.schemas.api_key import ExternalOrderInfo, ExternalOrderListResponse
 from app.services.api_key_service import ApiKeyService
 
 router = APIRouter(prefix="/api/external/orders", tags=["外部接口-订单查询"])
+
+
+def _external_order_status(status: int, refunded_amount: Decimal, total_amount: Decimal) -> int:
+    if status != 4:
+        return status
+    return 5 if refunded_amount >= total_amount else 4
 
 
 def _get_service(db: AsyncSession = Depends(get_db)) -> ApiKeyService:
@@ -39,7 +47,7 @@ async def list_external_orders(
             order_no=order.order_no,
             created_at=order.created_at,
             total_amount=order.total_amount,
-            status=order.status,
+            status=_external_order_status(order.status, order.refunded_amount, order.total_amount),
             refunded_amount=order.refunded_amount,
             expired_at=expired_at,
         )

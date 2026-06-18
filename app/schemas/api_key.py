@@ -96,7 +96,7 @@ class ExternalCouponStatusItem(BaseModel):
     sku_id: int = Field(title="SKU ID")
     sku_name: str = Field(title="SKU名称")
     redemption_code: str | None = Field(default=None, title="兑换码")
-    exchange_status: int = Field(title="兑换状态", description="0=未兑换, 1=已兑换, 2=已退款")
+    exchange_status: int = Field(title="算力券状态", description="0=未兑换, 1=已兑换, 2=已退款, 3=已过期")
     exchange_status_text: str = Field(title="兑换状态文本")
     exchanged_at: datetime | None = Field(default=None, title="兑换时间")
     dispatched: bool = Field(title="是否已派发", description="True=已通过外部接口派发, False=未派发")
@@ -122,7 +122,7 @@ class ExternalOrderInfo(BaseModel):
     order_no: str = Field(title="订单号")
     created_at: datetime = Field(title="创建时间")
     total_amount: Decimal = Field(title="订单总金额")
-    status: int = Field(title="订单状态", description="0=待支付, 1=已支付, 2=已取消, 3=已完成, 4=已退款")
+    status: int = Field(title="订单状态", description="0=待支付, 1=已支付, 2=已取消, 3=已完成, 4=部分退款, 5=全部退款")
     refunded_amount: Decimal = Field(title="已退款金额")
     expired_at: datetime | None = Field(default=None, title="过期时间", description="订单下订单项的最早过期时间")
 

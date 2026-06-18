@@ -11,6 +11,8 @@ from decimal import Decimal
 from fastapi import HTTPException
 from sqlalchemy import text
 
+from app.api.external_coupon import _external_coupon_status
+from app.api.external_order import _external_order_status
 from app.core.api_key_auth import get_user_by_api_key
 from app.core.database import async_session
 from app.models.api_key import ApiKey
@@ -60,7 +62,8 @@ async def setup_data(db):
     """), {"sku_id": SKU_ID})
 
     # Orders: 9100=USER_A 已支付(1), 9101=USER_A 已完成(3), 9102=USER_A 待支付(0),
-    #         9103=USER_A 已退款(4), 9104=USER_B 已支付(1)
+    #         9103=USER_A 全部退款(status=4/refunded=total), 9104=USER_B 已支付(1),
+    #         9105=USER_A 部分退款(status=4/refunded<total)
     await db.execute(text("""
         INSERT INTO orders (order_id, order_no, user_id, total_amount, status,
                             pay_channel, transaction_id, refunded_amount)
@@ -69,10 +72,11 @@ async def setup_data(db):
           (:o2, 'TKO_9101', :ua, 100.00, 3, 1, 'WX_9101', 0),
           (:o3, 'TKO_9102', :ua, 100.00, 0, 1, NULL,      0),
           (:o4, 'TKO_9103', :ua, 100.00, 4, 1, 'WX_9103', 100.00),
-          (:o5, 'TKO_9104', :ub, 100.00, 1, 1, 'WX_9104', 0)
+          (:o5, 'TKO_9104', :ub, 100.00, 1, 1, 'WX_9104', 0),
+          (:o6, 'TKO_9105', :ua, 100.00, 4, 1, 'WX_9105', 50.00)
     """), {
         "o1": ORDER_BASE, "o2": ORDER_BASE + 1, "o3": ORDER_BASE + 2,
-        "o4": ORDER_BASE + 3, "o5": ORDER_BASE + 4,
+        "o4": ORDER_BASE + 3, "o5": ORDER_BASE + 4, "o6": ORDER_BASE + 5,
         "ua": USER_A, "ub": USER_B,
     })
 
@@ -418,7 +422,13 @@ async def run_tests():
         report("9201 dispatched_at 为空", smap[ITEM_BASE + 1].dispatched_at is None)
         report("9201 已兑换", smap[ITEM_BASE + 1].exchange_status == 1)
         report("9202 未兑换", smap[ITEM_BASE + 2].exchange_status == 0)
-        report("9203 未兑换", smap[ITEM_BASE + 3].exchange_status == 0)
+        report("9203 数据库原始状态未兑换", smap[ITEM_BASE + 3].exchange_status == 0)
+        report("9202 对外状态仍为未兑换", _external_coupon_status(
+            smap[ITEM_BASE + 2].exchange_status, smap[ITEM_BASE + 2].expired_at) == 0)
+        report("9203 对外状态映射为已过期", _external_coupon_status(
+            smap[ITEM_BASE + 3].exchange_status, smap[ITEM_BASE + 3].expired_at) == 3)
+        report("9201 已兑换不因过期映射为已过期", _external_coupon_status(
+            smap[ITEM_BASE + 1].exchange_status, smap[ITEM_BASE + 1].expired_at) == 1)
 
         # 12.6.4 已退款订单(status=4) 也支持查询(不限制订单状态)
         items_s2 = await svc.query_coupon_status(USER_A, order_no_rfnd)
@@ -443,11 +453,12 @@ async def run_tests():
         orders_b = await svc.list_external_orders(USER_B)
         order_nos_a = {order.order_no for order, _ in orders_a}
         order_nos_b = {order.order_no for order, _ in orders_b}
-        report("USER_A 至少返回本测试的 4 个订单", len(orders_a) >= 4)
+        report("USER_A 至少返回本测试的 5 个订单", len(orders_a) >= 5)
         report("USER_A 包含 TKO_9100", "TKO_9100" in order_nos_a)
         report("USER_A 包含 TKO_9101", "TKO_9101" in order_nos_a)
         report("USER_A 包含 TKO_9102", "TKO_9102" in order_nos_a)
         report("USER_A 包含 TKO_9103", "TKO_9103" in order_nos_a)
+        report("USER_A 包含 TKO_9105", "TKO_9105" in order_nos_a)
         report("USER_A 不含 USER_B 订单", "TKO_9104" not in order_nos_a)
         report("USER_B 返回 1 个订单", len(orders_b) == 1 and "TKO_9104" in order_nos_b)
         a_map = {order.order_no: (order, expired_at) for order, expired_at in orders_a}
@@ -457,7 +468,19 @@ async def run_tests():
         report("订单查询返回订单状态", a_map["TKO_9100"][0].status == 1)
         report("订单查询返回已退款金额", a_map["TKO_9100"][0].refunded_amount == Decimal("0.00"))
         report("订单查询返回最早过期时间", a_map["TKO_9100"][1] is not None)
-        report("订单查询已退款订单状态正确", a_map["TKO_9103"][0].status == 4)
+        report("订单查询已退款原始状态正确", a_map["TKO_9103"][0].status == 4)
+        report("外部订单状态: 全部退款映射为 5",
+               _external_order_status(a_map["TKO_9103"][0].status,
+                                      a_map["TKO_9103"][0].refunded_amount,
+                                      a_map["TKO_9103"][0].total_amount) == 5)
+        report("外部订单状态: 部分退款映射为 4",
+               _external_order_status(a_map["TKO_9105"][0].status,
+                                      a_map["TKO_9105"][0].refunded_amount,
+                                      a_map["TKO_9105"][0].total_amount) == 4)
+        report("外部订单状态: 非退款状态保持不变",
+               _external_order_status(a_map["TKO_9100"][0].status,
+                                      a_map["TKO_9100"][0].refunded_amount,
+                                      a_map["TKO_9100"][0].total_amount) == 1)
 
         # ──── 测试 13: delete ────
         print("\n【测试 13】delete")
