@@ -162,6 +162,37 @@ class OrderService:
         order = (await self.db.execute(stmt)).scalar_one()
         return order
 
+    async def create_order_via_interface(
+        self, user_id: int, sku_id: int, quantity: int, client_order_no: str,
+    ) -> Order:
+        """接口下单直发: 绕过支付, 创建已支付订单(pay_channel=3)及待生成兑换码的订单项.
+        兑换码由调用方在后台异步生成(create_redemption_codes_for_order), 本方法只负责建单."""
+        sku = (await self.db.execute(
+            select(Sku).where(Sku.sku_id == sku_id, Sku.status == 1)
+        )).scalar_one_or_none()
+        if not sku:
+            raise ValueError("SKU 不存在或已下架")
+
+        total_amount = sku.face_value * quantity
+        order = Order(
+            order_no=uuid.uuid4().hex[:16].upper(),
+            user_id=user_id,
+            total_amount=total_amount,
+            status=1,
+            pay_channel=3,
+            client_order_no=client_order_no,
+            pay_info='{"source":"interface"}',
+        )
+        expired_at = _calc_expired_at(sku.expire_type, sku.expire_value)
+        for _ in range(quantity):
+            order.items.append(OrderItem(sku_id=sku.sku_id, expired_at=expired_at))
+        self.db.add(order)
+        await self.db.commit()
+        reload = select(Order).where(Order.order_id == order.order_id).options(
+            selectinload(Order.items).selectinload(OrderItem.sku),
+        )
+        return (await self.db.execute(reload)).scalar_one()
+
     async def create_redemption_codes_for_order(
         self, order_id: int, ext_svc: ExternalPlatformService
     ) -> None:

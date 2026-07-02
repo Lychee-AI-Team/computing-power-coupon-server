@@ -30,6 +30,9 @@ class Settings(BaseSettings):
     EXCHANGE_API_SECRET_KEY: str = ""
     EXCHANGE_TOKEN_MAX_AGE_SECONDS: int = 0  # 0 = 永久有效
 
+    # 接口下单白名单（逗号分隔的 user_id）
+    INTERFACE_ORDER_ALLOWED_USER_IDS: str = ""
+
     # WeChat Pay V3
     WECHAT_APPID: str = ""
     WECHAT_MCH_ID: str = ""
@@ -57,6 +60,10 @@ class Settings(BaseSettings):
     def redis_url(self) -> str:
         auth = f":{quote_plus(self.REDIS_PASSWORD)}@" if self.REDIS_PASSWORD else ""
         return f"redis://{auth}{self.REDIS_HOST}:{self.REDIS_PORT}/{self.REDIS_DB}"
+
+    @property
+    def interface_order_allowed_user_ids(self) -> set[int]:
+        return {int(x) for x in self.INTERFACE_ORDER_ALLOWED_USER_IDS.split(",") if x.strip()}
 
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 

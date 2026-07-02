@@ -13,6 +13,7 @@ from app.api.exchange import router as exchange_router
 from app.api.external_coupon import router as external_coupon_router
 from app.api.external_order import router as external_order_router
 from app.api.health import router as health_router
+from app.api.interface_order import router as interface_order_router
 from app.api.order import router as order_router
 from app.api.payment import router as payment_router
 from app.api.refund import router as refund_router
@@ -128,6 +129,7 @@ app.include_router(exchange_router)
 app.include_router(api_key_router)
 app.include_router(external_coupon_router)
 app.include_router(external_order_router)
+app.include_router(interface_order_router)
 
 
 def _customize_openapi():
