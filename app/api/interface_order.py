@@ -2,7 +2,9 @@ import logging
 
 import httpx
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request, status
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.core.api_key_auth import get_user_by_api_key
 from app.core.config import settings
@@ -10,6 +12,7 @@ from app.core.database import async_session, get_db
 from app.core.external_client import get_external_client
 from app.core.rate_limit import check_rate_limit
 from app.models.api_key import ApiKey
+from app.models.order import Order, OrderItem
 from app.models.user import User
 from app.schemas.interface_order import (
     ORDER_STATUS_FAILED,
@@ -20,7 +23,6 @@ from app.schemas.interface_order import (
     InterfaceOrderRequest,
     InterfaceOrderStatusResponse,
 )
-from app.services.api_key_service import ApiKeyService
 from app.services.external_platform import ExternalPlatformService
 from app.services.order_service import OrderService
 
@@ -91,12 +93,12 @@ async def create_order_via_interface(
     "/status",
     response_model=InterfaceOrderStatusResponse,
     summary="查询接口订单卡密与生成状态",
-    description="按平台订单号查询订单生成状态(generating/failed/success)，仅 success 时返回卡密数组；需 user_id 与 X-API-Key 一致且在白名单内",
+    description="按客户侧订单号查询订单生成状态(generating/failed/success)，仅 success 时返回卡密数组；需 user_id 与 X-API-Key 一致且在白名单内；业务上需保证 (user_id, client_order_no) 唯一",
 )
 async def query_interface_order_status(
     request: Request,
     user_id: int = Query(..., gt=0, description="用户ID, 必须与 X-API-Key 所属用户一致"),
-    order_no: str = Query(..., min_length=1, max_length=64, description="平台订单号(创建接口返回的 order_no)"),
+    client_order_no: str = Query(..., min_length=1, max_length=64, description="客户侧订单号(创建接口传入的 client_order_no)"),
     auth: tuple[User, ApiKey] = Depends(get_user_by_api_key),
     db: AsyncSession = Depends(get_db),
 ):
@@ -109,9 +111,20 @@ async def query_interface_order_status(
     ip = request.client.host if request.client else "unknown"
     await check_rate_limit(f"rate_limit:interface_order_status:ip:{ip}", max_requests=300, window_seconds=60)
 
-    svc = ApiKeyService(db)
-    items = await svc.query_coupon_status(user.id, order_no)
+    # 按 (user_id, client_order_no) 查订单; 业务上需保证唯一
+    stmt = (
+        select(Order)
+        .where(Order.client_order_no == client_order_no, Order.user_id == user.id)
+        .options(selectinload(Order.items).selectinload(OrderItem.sku))
+    )
+    order = (await db.execute(stmt)).scalar_one_or_none()
+    if not order:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="订单不存在或不属于当前 API Key 所属用户",
+        )
 
+    items = order.items
     statuses = [it.redemption_status for it in items]
     if any(s == 3 for s in statuses):
         order_status = ORDER_STATUS_FAILED
@@ -126,7 +139,7 @@ async def query_interface_order_status(
     return InterfaceOrderStatusResponse(
         success=True,
         message="查询成功",
-        order_no=order_no,
+        order_no=order.order_no,
         order_status=order_status,
         order_status_text=ORDER_STATUS_TEXT[order_status],
         total=len(items),
