@@ -1,3 +1,24 @@
+-- ============================================================
+-- 版本: V_init
+-- 分支: init (项目初始化)
+-- 创建日期: 2026-05-21
+-- 关联提交: 4a1592a init: 算力券服务项目初始提交 (后续多次累积更新至 d96dcb3)
+-- 变更描述:
+--   基线 schema 全量快照: 建库 + users / api_keys / sku_config /
+--   orders / order_items / cart_items / refunds 七张表。
+--   已合并所有历史 feature 分支的 schema 变更：
+--     - feature/api-key: api_keys 表
+--     - feature/wechat-refund: refunds.item_ids/disable_result, order_items.exchange_status 注释
+--     - feature/external-interface: order_items.dispatched_at/exchanged_at + idx_order_dispatch
+--     - feature/interface-order: orders.client_order_no, pay_channel 注释补 3=接口调用
+-- 关联功能:
+--   全服务基础表结构，对应 app/models/*.py
+-- 幂等性: 是 (CREATE TABLE IF NOT EXISTS / CREATE DATABASE IF NOT EXISTS)
+-- 执行方式:
+--   全新部署执行本文件即可获得当前完整 schema。
+--   以后的字段变动跟分支走，新增 V_<分支名>.sql 增量脚本。
+-- ============================================================
+
 CREATE DATABASE IF NOT EXISTS `computing_power_coupon` DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 
 USE `computing_power_coupon`;
@@ -9,6 +30,23 @@ CREATE TABLE IF NOT EXISTS `users` (
     UNIQUE KEY `uk_username` (`username`),
     KEY `idx_username` (`username`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS `api_keys` (
+    `id` INT NOT NULL AUTO_INCREMENT COMMENT 'API Key ID',
+    `user_id` INT NOT NULL COMMENT '所属用户ID',
+    `name` VARCHAR(64) NOT NULL COMMENT 'Key 名称',
+    `key_prefix` VARCHAR(16) NOT NULL COMMENT '展示用前缀, sk_+前8位hex',
+    `key_hash` VARCHAR(64) NOT NULL COMMENT 'Key SHA256 hex',
+    `status` TINYINT NOT NULL DEFAULT 1 COMMENT '状态: 0=禁用, 1=启用',
+    `expired_at` DATETIME DEFAULT NULL COMMENT '过期时间, NULL=永不过期',
+    `last_used_at` DATETIME DEFAULT NULL COMMENT '最近一次使用时间',
+    `created_at` DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    `updated_at` DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `uk_key_hash` (`key_hash`),
+    KEY `idx_user_id` (`user_id`),
+    KEY `idx_status_expired` (`status`, `expired_at`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='API Key 管理表';
 
 CREATE TABLE IF NOT EXISTS `sku_config` (
     `sku_id` INT NOT NULL AUTO_INCREMENT COMMENT 'SKU ID',
@@ -32,9 +70,10 @@ CREATE TABLE IF NOT EXISTS `orders` (
     `user_id` INT NOT NULL COMMENT '用户ID',
     `total_amount` DECIMAL(10, 2) NOT NULL COMMENT '订单总金额',
     `status` TINYINT NOT NULL DEFAULT 0 COMMENT '订单状态: 0=待支付, 1=已支付, 2=已取消, 3=已完成, 4=已退款',
-    `pay_channel` TINYINT DEFAULT NULL COMMENT '支付渠道: 1=微信, 2=支付宝',
+    `pay_channel` TINYINT DEFAULT NULL COMMENT '支付渠道: 1=微信, 2=支付宝, 3=接口调用',
     `transaction_id` VARCHAR(64) DEFAULT NULL COMMENT '微信支付交易号',
     `pay_info` TEXT DEFAULT NULL COMMENT '微信支付信息JSON',
+    `client_order_no` VARCHAR(64) DEFAULT NULL COMMENT '客户侧订单号, 接口下单来源',
     `refunded_amount` DECIMAL(10, 2) NOT NULL DEFAULT 0 COMMENT '累计已退款金额',
     `created_at` DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
     `updated_at` DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
